@@ -4,6 +4,7 @@
 		dev/install/ginkgo \
 		dev/install/kubebuilder dev/install/kustomize \
 		dev/install/kubectl dev/install/kind dev/install/minikube \
+		dev/install/golangci-lint \
 		start/k8s start/kind start/control-plane/k8s \
 		deploy/example-app/k8s deploy/control-plane/k8s \
 		kind/load/control-plane kind/load/kuma-dp kind/load/kuma-injector \
@@ -117,6 +118,7 @@ endif
 PROTOC_VERSION := 3.6.1
 PROTOC_PGV_VERSION := v0.1.0
 GOGO_PROTOBUF_VERSION := v1.2.1
+GOLANGCI_LINT_VERSION := v1.21.0
 
 CI_KUBEBUILDER_VERSION ?= 2.0.0
 CI_KIND_VERSION ?= v0.5.1
@@ -140,6 +142,7 @@ MINIKUBE_PATH := $(CI_TOOLS_DIR)/minikube
 KUBECTL_PATH := $(CI_TOOLS_DIR)/kubectl
 KUBE_APISERVER_PATH := $(CI_TOOLS_DIR)/kube-apiserver
 ETCD_PATH := $(CI_TOOLS_DIR)/etcd
+GOLANGCI_LINT_DIR := $(CI_TOOLS_DIR)
 
 PROTO_DIR := ./pkg/config
 
@@ -185,7 +188,8 @@ dev/tools: dev/tools/all ## Bootstrap: Install all development tools
 dev/tools/all: dev/install/protoc dev/install/protoc-gen-gogofast dev/install/protoc-gen-validate \
 	dev/install/ginkgo \
 	dev/install/kubebuilder dev/install/kustomize \
-	dev/install/kubectl dev/install/kind dev/install/minikube
+	dev/install/kubectl dev/install/kind dev/install/minikube \
+	dev/install/golangci-lint
 
 dev/install/protoc: ## Bootstrap: Install Protoc (protobuf compiler)
 	@if [ -e $(PROTOC_PATH) ]; then echo "Protoc $$( $(PROTOC_PATH) --version ) is already installed at $(PROTOC_PATH)" ; fi
@@ -284,6 +288,9 @@ dev/install/minikube: ## Bootstrap: Install Minikube
 		&& set +x \
 		&& echo "Minikube $(CI_MINIKUBE_VERSION) has been installed at $(MINIKUBE_PATH)" ; fi
 
+dev/install/golangci-lint: ## Bootstrap: Install golangci-lint
+	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b $(GOLANGCI_LINT_DIR) $(GOLANGCI_LINT_VERSION)
+
 start/k8s: start/kind deploy/example-app/k8s ## Bootstrap: Start Kubernetes locally (KIND) and deploy sample app
 
 start/kind:
@@ -356,7 +363,10 @@ vet: ## Dev: Run go vet
 	@# for consistency with `fmt`
 	make vet -C pkg/plugins/resources/k8s/native
 
-check: generate fmt vet docs ## Dev: Run code checks (go fmt, go vet, ...)
+golangci-lint:
+	$(GOLANGCI_LINT_DIR)/golangci-lint run
+
+check: generate fmt vet docs golangci-lint ## Dev: Run code checks (go fmt, go vet, golangci-lint, ...)
 	make generate manifests -C pkg/plugins/resources/k8s/native
 	git diff --quiet || test $$(git diff --name-only | grep -v -e 'go.mod$$' -e 'go.sum$$' | wc -l) -eq 0 || ( echo "The following changes (result of code generators and code checks) have been detected:" && git --no-pager diff && false ) # fail if Git working tree is dirty
 
