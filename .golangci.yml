@@ -1,0 +1,19 @@
+linters:
+  enable:
+    - gocritic
+    - unconvert
+    - bodyclose
+    - whitespace
+    - misspell
+
+run:
+  skip-files:
+    - app/kumactl/pkg/k8s/kubectl_proxy.go
+    - pkg/sds/server/sds.go
+    - pkg/xds/server/server.go
+    - pkg/xds/server/server_test.go
+
+linters-settings:
+  gocritic:
+    disabled-checks:
+      - singleCaseSwitch
