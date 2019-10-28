@@ -364,7 +364,7 @@ vet: ## Dev: Run go vet
 	make vet -C pkg/plugins/resources/k8s/native
 
 golangci-lint:
-	$(GOLANGCI_LINT_DIR)/golangci-lint run
+	GOARCH=$(GOARCH) $(GOLANGCI_LINT_DIR)/golangci-lint run -v
 
 check: generate fmt vet docs golangci-lint ## Dev: Run code checks (go fmt, go vet, golangci-lint, ...)
 	make generate manifests -C pkg/plugins/resources/k8s/native

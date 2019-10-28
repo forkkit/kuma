@@ -12,6 +12,7 @@ run:
     - pkg/sds/server/sds.go
     - pkg/xds/server/server.go
     - pkg/xds/server/server_test.go
+  modules-download-mode: readonly
 
 linters-settings:
   gocritic:
