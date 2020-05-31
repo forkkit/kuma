@@ -2,12 +2,14 @@ package api_server_test
 
 import (
 	"fmt"
-	config "github.com/Kong/kuma/pkg/config/api-server"
-	"github.com/Kong/kuma/pkg/plugins/resources/memory"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
 	"io/ioutil"
 	"net/http"
+
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
+
+	config "github.com/Kong/kuma/pkg/config/api-server"
+	"github.com/Kong/kuma/pkg/plugins/resources/memory"
 )
 
 var _ = Describe("Catalog WS", func() {
@@ -15,9 +17,13 @@ var _ = Describe("Catalog WS", func() {
 	It("should return the api catalog", func() {
 		// given
 		cfg := config.DefaultApiServerConfig()
+		cfg.Catalog.Admin.LocalUrl = "http://localhost:1111"
+		cfg.Catalog.Admin.PublicUrl = "https://kuma.internal:2222"
 		cfg.Catalog.DataplaneToken.LocalUrl = "http://localhost:1111"
 		cfg.Catalog.DataplaneToken.PublicUrl = "https://kuma.internal:2222"
 		cfg.Catalog.Bootstrap.Url = "http://kuma.internal:3333"
+		cfg.Catalog.MonitoringAssignment.Url = "grpc://kuma.internal:4444"
+		cfg.Catalog.Sds.Url = "https://sds.kuma.io:5555"
 
 		// setup
 		resourceStore := memory.NewStore()
@@ -53,6 +59,13 @@ var _ = Describe("Catalog WS", func() {
 				"dataplaneToken": {
 					"localUrl": "http://localhost:1111",
 					"publicUrl": "https://kuma.internal:2222"
+				},
+				"admin": {
+					"localUrl": "http://localhost:1111",
+					"publicUrl": "https://kuma.internal:2222"
+				},
+				"monitoringAssignment": {
+					"url": "grpc://kuma.internal:4444"
 				}
 			}
 		}

@@ -8,6 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kong/kuma/pkg/core/resources/model"
+
+	"github.com/golang/protobuf/ptypes/timestamp"
+
 	"github.com/Kong/kuma/app/kumactl/cmd"
 	"github.com/Kong/kuma/app/kumactl/pkg/resources"
 
@@ -27,14 +31,20 @@ import (
 )
 
 type testDataplaneOverviewClient struct {
-	receivedTags map[string]string
-	overviews    []*mesh_core.DataplaneOverviewResource
+	receivedTags    map[string]string
+	receivedGateway bool
+	total           uint32
+	overviews       []*mesh_core.DataplaneOverviewResource
 }
 
-func (c *testDataplaneOverviewClient) List(_ context.Context, _ string, tags map[string]string) (*mesh_core.DataplaneOverviewResourceList, error) {
+func (c *testDataplaneOverviewClient) List(_ context.Context, _ string, tags map[string]string, gateway bool) (*mesh_core.DataplaneOverviewResourceList, error) {
 	c.receivedTags = tags
+	c.receivedGateway = gateway
 	return &mesh_core.DataplaneOverviewResourceList{
 		Items: c.overviews,
+		Pagination: model.Pagination{
+			Total: c.total,
+		},
 	}, nil
 }
 
@@ -49,27 +59,32 @@ var _ = Describe("kumactl inspect dataplanes", func() {
 		now, _ = time.Parse(time.RFC3339, "2019-07-17T18:08:41+00:00")
 		t1, _ = time.Parse(time.RFC3339, "2018-07-17T16:05:36.995+00:00")
 		t2, _ = time.Parse(time.RFC3339, "2019-07-17T16:05:36.995+00:00")
+		time.Local = time.UTC
 
 		sampleDataplaneOverview = []*mesh_core.DataplaneOverviewResource{
 			{
 				Meta: &test_model.ResourceMeta{
-					Mesh:      "default",
-					Namespace: "trial",
-					Name:      "experiment",
+					Mesh:             "default",
+					Name:             "experiment",
+					CreationTime:     t1,
+					ModificationTime: now,
 				},
 				Spec: mesh_proto.DataplaneOverview{
 					Dataplane: &mesh_proto.Dataplane{
 						Networking: &mesh_proto.Dataplane_Networking{
+							Address: "127.0.0.1",
 							Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
 								{
-									Interface: "127.0.0.1:8080:80",
+									Port:        8080,
+									ServicePort: 80,
 									Tags: map[string]string{
 										"service": "mobile",
 										"version": "v1",
 									},
 								},
 								{
-									Interface: "127.0.0.1:8090:90",
+									Port:        8090,
+									ServicePort: 90,
 									Tags: map[string]string{
 										"service": "metrics",
 										"version": "v1",
@@ -103,21 +118,33 @@ var _ = Describe("kumactl inspect dataplanes", func() {
 								},
 							},
 						},
+						MTLS: &mesh_proto.DataplaneInsight_MTLS{
+							CertificateExpirationTime: &timestamp.Timestamp{
+								Seconds: 1588926502,
+							},
+							LastCertificateRegeneration: &timestamp.Timestamp{
+								Seconds: 1563306488,
+							},
+							CertificateRegenerations: 10,
+						},
 					},
 				},
 			},
 			{
 				Meta: &test_model.ResourceMeta{
-					Mesh:      "default",
-					Namespace: "demo",
-					Name:      "example",
+					Mesh:             "default",
+					Name:             "example",
+					CreationTime:     t1,
+					ModificationTime: now,
 				},
 				Spec: mesh_proto.DataplaneOverview{
 					Dataplane: &mesh_proto.Dataplane{
 						Networking: &mesh_proto.Dataplane_Networking{
+							Address: "127.0.0.1",
 							Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
 								{
-									Interface: "127.0.0.1:8080:80",
+									Port:        8080,
+									ServicePort: 80,
 									Tags: map[string]string{
 										"service": "example",
 									},
@@ -146,7 +173,7 @@ var _ = Describe("kumactl inspect dataplanes", func() {
 		}
 	})
 
-	Describe("GetDataplanesCmd", func() {
+	Describe("InspectDataplanesCmd", func() {
 
 		var rootCtx *kumactl_cmd.RootContext
 		var rootCmd *cobra.Command
@@ -157,6 +184,7 @@ var _ = Describe("kumactl inspect dataplanes", func() {
 		BeforeEach(func() {
 			// setup
 			testClient = &testDataplaneOverviewClient{
+				total:     uint32(len(sampleDataplaneOverview)),
 				overviews: sampleDataplaneOverview,
 			}
 
@@ -185,7 +213,7 @@ var _ = Describe("kumactl inspect dataplanes", func() {
 				// given
 				rootCmd.SetArgs(append([]string{
 					"--config-file", filepath.Join("..", "testdata", "sample-kumactl.config.yaml"),
-					"get", "dataplanes"}, given.outputFormat))
+					"inspect", "dataplanes"}, given.outputFormat))
 
 				// when
 				err := rootCmd.Execute()
@@ -230,7 +258,7 @@ var _ = Describe("kumactl inspect dataplanes", func() {
 				// given
 				rootCmd.SetArgs([]string{
 					"--config-file", filepath.Join("..", "testdata", "sample-kumactl.config.yaml"),
-					"get", "dataplanes", "--tag", "service=mobile", "--tag", "version=v1"})
+					"inspect", "dataplanes", "--tag", "service=mobile", "--tag", "version=v1"})
 
 				// when
 				err := rootCmd.Execute()
@@ -239,6 +267,22 @@ var _ = Describe("kumactl inspect dataplanes", func() {
 				// and
 				Expect(testClient.receivedTags).To(HaveKeyWithValue("service", "mobile"))
 				Expect(testClient.receivedTags).To(HaveKeyWithValue("version", "v1"))
+			})
+		})
+
+		Describe("kumactl inspect dataplanes --gateway", func() {
+			It("gateway should be passed to the client", func() {
+				// given
+				rootCmd.SetArgs([]string{
+					"--config-file", filepath.Join("..", "testdata", "sample-kumactl.config.yaml"),
+					"inspect", "dataplanes", "--gateway"})
+
+				// when
+				err := rootCmd.Execute()
+				// then
+				Expect(err).ToNot(HaveOccurred())
+				// and
+				Expect(testClient.receivedGateway).To(BeTrue())
 			})
 		})
 	})

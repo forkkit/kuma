@@ -10,13 +10,18 @@ import (
 	"github.com/shurcooL/httpfs/vfsutil"
 )
 
-type File []byte
+type FileList []File
 
-func (f File) String() string {
-	return string(f)
+type File struct {
+	Data []byte
+	Name string
 }
 
-func ReadFiles(fs http.FileSystem) ([]File, error) {
+func (f File) String() string {
+	return string(f.Data)
+}
+
+func ReadFiles(fs http.FileSystem) (FileList, error) {
 	files := []File{}
 
 	walkFn := func(path string, fi os.FileInfo, r io.ReadSeeker, err error) error {
@@ -28,7 +33,11 @@ func ReadFiles(fs http.FileSystem) ([]File, error) {
 			if err != nil {
 				return errors.Wrapf(err, "Failed to read file: %s", path)
 			}
-			files = append(files, data)
+			file := File{
+				Data: data,
+				Name: fi.Name(),
+			}
+			files = append(files, file)
 		}
 		return nil
 	}
@@ -43,11 +52,24 @@ func ReadFiles(fs http.FileSystem) ([]File, error) {
 func ReadFile(fs http.FileSystem, file string) (File, error) {
 	f, err := fs.Open(file)
 	if err != nil {
-		return nil, err
+		return File{}, err
 	}
 	b, err := ioutil.ReadAll(f)
 	if err != nil {
-		return nil, err
+		return File{}, err
 	}
-	return b, nil
+	return File{
+		Data: b,
+		Name: file,
+	}, nil
+}
+
+func (l FileList) Filter(predicate func(File) bool) FileList {
+	var list FileList
+	for _, file := range l {
+		if predicate(file) {
+			list = append(list, file)
+		}
+	}
+	return list
 }

@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"errors"
+
 	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/core/resources/model"
 	"github.com/Kong/kuma/pkg/core/resources/registry"
@@ -43,7 +44,8 @@ func (t *MeshResource) SetSpec(spec model.ResourceSpec) error {
 var _ model.ResourceList = &MeshResourceList{}
 
 type MeshResourceList struct {
-	Items []*MeshResource
+	Items      []*MeshResource
+	Pagination model.Pagination
 }
 
 func (l *MeshResourceList) GetItems() []model.Resource {
@@ -66,6 +68,9 @@ func (l *MeshResourceList) AddItem(r model.Resource) error {
 	} else {
 		return model.ErrorInvalidItemType((*MeshResource)(nil), r)
 	}
+}
+func (l *MeshResourceList) GetPagination() *model.Pagination {
+	return &l.Pagination
 }
 
 func init() {

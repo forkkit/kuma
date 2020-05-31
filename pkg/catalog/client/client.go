@@ -1,14 +1,16 @@
 package client
 
 import (
+	"crypto/tls"
 	"encoding/json"
-	"github.com/Kong/kuma/pkg/catalog"
-	"github.com/pkg/errors"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/pkg/errors"
+
+	"github.com/Kong/kuma/pkg/catalog"
 	util_http "github.com/Kong/kuma/pkg/util/http"
 )
 
@@ -26,7 +28,8 @@ func NewCatalogClient(address string) (CatalogClient, error) {
 		return nil, errors.Wrapf(err, "Failed to parse API Server URL")
 	}
 	client := &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 	}
 	return &httpCatalogClient{
 		client: util_http.ClientWithBaseURL(client, baseURL),

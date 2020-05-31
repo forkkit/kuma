@@ -29,8 +29,9 @@ type RootRuntime struct {
 	Config                     config_proto.Configuration
 	Now                        func() time.Time
 	NewResourceStore           func(*config_proto.ControlPlaneCoordinates_ApiServer) (core_store.ResourceStore, error)
+	NewAdminResourceStore      func(string, *kumactl_config.Context_AdminApiCredentials) (core_store.ResourceStore, error)
 	NewDataplaneOverviewClient func(*config_proto.ControlPlaneCoordinates_ApiServer) (kumactl_resources.DataplaneOverviewClient, error)
-	NewDataplaneTokenClient    func(string, *kumactl_config.Context_DataplaneTokenApiCredentials) (tokens.DataplaneTokenClient, error)
+	NewDataplaneTokenClient    func(string, *kumactl_config.Context_AdminApiCredentials) (tokens.DataplaneTokenClient, error)
 	NewCatalogClient           func(string) (catalog_client.CatalogClient, error)
 }
 
@@ -44,6 +45,7 @@ func DefaultRootContext() *RootContext {
 		Runtime: RootRuntime{
 			Now:                        time.Now,
 			NewResourceStore:           kumactl_resources.NewResourceStore,
+			NewAdminResourceStore:      kumactl_resources.NewAdminResourceStore,
 			NewDataplaneOverviewClient: kumactl_resources.NewDataplaneOverviewClient,
 			NewDataplaneTokenClient:    tokens.NewDataplaneTokenClient,
 			NewCatalogClient:           catalog_client.NewCatalogClient,
@@ -109,6 +111,23 @@ func (rc *RootContext) CurrentResourceStore() (core_store.ResourceStore, error) 
 	return rs, nil
 }
 
+func (rc *RootContext) CurrentAdminResourceStore() (core_store.ResourceStore, error) {
+	ctx, err := rc.CurrentContext()
+	if err != nil {
+		return nil, err
+	}
+
+	adminServerUrl, err := rc.adminServerUrl()
+	if err != nil {
+		return nil, err
+	}
+	rs, err := rc.Runtime.NewAdminResourceStore(adminServerUrl, ctx.GetCredentials().GetAdminApi())
+	if err != nil {
+		return nil, err
+	}
+	return rs, nil
+}
+
 func (rc *RootContext) CurrentDataplaneOverviewClient() (kumactl_resources.DataplaneOverviewClient, error) {
 	controlPlane, err := rc.CurrentControlPlane()
 	if err != nil {
@@ -130,6 +149,7 @@ func (rc *RootContext) catalog() (catalog.Catalog, error) {
 }
 
 func (rc *RootContext) CurrentDataplaneTokenClient() (tokens.DataplaneTokenClient, error) {
+	// todo(jakubdyszkiewicz) check enable/disable by checking cp config
 	components, err := rc.catalog()
 	if err != nil {
 		return nil, err
@@ -137,44 +157,61 @@ func (rc *RootContext) CurrentDataplaneTokenClient() (tokens.DataplaneTokenClien
 	if !components.Apis.DataplaneToken.Enabled() {
 		return nil, errors.New("Enable the server to be able to generate tokens.")
 	}
+
 	ctx, err := rc.CurrentContext()
 	if err != nil {
 		return nil, err
 	}
 
-	sameMachine, err := rc.cpOnTheSameMachine()
+	adminServerUrl, err := rc.adminServerUrl()
 	if err != nil {
-		return nil, errors.Wrap(err, "could not determine if cp is on the same machine")
+		return nil, err
 	}
-	var dpTokenUrl string
-	if sameMachine {
-		dpTokenUrl = components.Apis.DataplaneToken.LocalUrl
-	} else {
-		if err := validateRemoteDataplaneTokenServerSettings(ctx, components); err != nil {
-			return nil, err
-		}
-		dpTokenUrl = components.Apis.DataplaneToken.PublicUrl
-	}
-	return rc.Runtime.NewDataplaneTokenClient(dpTokenUrl, ctx.GetCredentials().GetDataplaneTokenApi())
+	return rc.Runtime.NewDataplaneTokenClient(adminServerUrl, ctx.GetCredentials().GetAdminApi())
 }
 
-func validateRemoteDataplaneTokenServerSettings(ctx *kumactl_config.Context, components catalog.Catalog) error {
+func (rc *RootContext) adminServerUrl() (string, error) {
+	components, err := rc.catalog()
+	if err != nil {
+		return "", err
+	}
+
+	ctx, err := rc.CurrentContext()
+	if err != nil {
+		return "", err
+	}
+
+	sameMachine, err := rc.cpOnTheSameMachine()
+	if err != nil {
+		return "", errors.Wrap(err, "could not determine if cp is on the same machine")
+	}
+	if sameMachine {
+		return components.Apis.Admin.LocalUrl, nil
+	} else {
+		if err := validateRemoteAdminServerSettings(ctx, components); err != nil {
+			return "", err
+		}
+		return components.Apis.DataplaneToken.PublicUrl, nil
+	}
+}
+
+func validateRemoteAdminServerSettings(ctx *kumactl_config.Context, components catalog.Catalog) error {
 	reason := ""
-	clientConfigured := ctx.GetCredentials().GetDataplaneTokenApi().HasClientCert()
-	serverConfigured := components.Apis.DataplaneToken.PublicUrl != ""
+	clientConfigured := ctx.GetCredentials().GetAdminApi().HasClientCert()
+	serverConfigured := components.Apis.Admin.PublicUrl != ""
 	if !clientConfigured && serverConfigured {
-		reason = "dataplane token server in kuma-cp is configured with TLS and kumactl is not."
+		reason = "admin server in kuma-cp is configured with TLS and kumactl is not."
 	}
 	if clientConfigured && !serverConfigured {
-		reason = "kumactl is configured with TLS and dataplane token server in kuma-cp is not."
+		reason = "kumactl is configured with TLS and admin server in kuma-cp is not."
 	}
 	if !clientConfigured && !serverConfigured {
-		reason = "both kumactl and dataplane token server in kuma-cp are not configured with TLS."
+		reason = "both kumactl and admin server in kuma-cp are not configured with TLS."
 	}
 	if reason != "" { // todo(jakubdyszkiewicz) once docs are in place, put a link to it in 1)
-		msg := fmt.Sprintf(`kumactl is trying to access dataplane token server in remote machine but: %s. This can be solved in several ways:
-1) Configure kuma-cp dataplane token server with certificate and then use this certificate to configure kumactl.
-2) Run kumactl generate dataplane-token on the same machine as kuma-cp.
+		msg := fmt.Sprintf(`kumactl is trying to access admin server in remote machine but: %s. This can be solved in several ways:
+1) Configure kuma-cp admin server with certificate and then use this certificate to configure kumactl.
+2) Use kumactl on the same machine as kuma-cp.
 3) Use SSH port forwarding so that kuma-cp could be accessed on a remote machine with kumactl on a loopback address.`, reason)
 		return errors.New(msg)
 	}

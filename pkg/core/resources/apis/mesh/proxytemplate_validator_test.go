@@ -1,13 +1,13 @@
 package mesh_test
 
 import (
-	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
+	"github.com/ghodss/yaml"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
 
+	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	util_proto "github.com/Kong/kuma/pkg/util/proto"
-	"github.com/ghodss/yaml"
 )
 
 var _ = Describe("ProxyTemplate", func() {
@@ -146,7 +146,7 @@ var _ = Describe("ProxyTemplate", func() {
 				expected: `
                 violations:
                 - field: selectors[0].match
-                  message: tag key must be non-empty
+                  message: tag name must be non-empty
                 - field: selectors[0].match
                   message: mandatory tag "service" is missing`,
 			}),

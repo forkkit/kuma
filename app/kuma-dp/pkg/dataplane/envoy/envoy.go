@@ -3,7 +3,6 @@ package envoy
 import (
 	"context"
 	"fmt"
-	"github.com/Kong/kuma/pkg/catalog"
 	"io"
 	"os"
 	"os/exec"
@@ -12,11 +11,12 @@ import (
 	"path/filepath"
 
 	"github.com/golang/protobuf/proto"
-
 	"github.com/pkg/errors"
 
+	"github.com/Kong/kuma/pkg/catalog"
 	kuma_dp "github.com/Kong/kuma/pkg/config/app/kuma-dp"
 	"github.com/Kong/kuma/pkg/core"
+	"github.com/Kong/kuma/pkg/core/runtime/component"
 )
 
 var (
@@ -38,9 +38,15 @@ type Opts struct {
 	Stderr    io.Writer
 }
 
-func New(opts Opts) *Envoy {
-	return &Envoy{opts: opts}
+func New(opts Opts) (*Envoy, error) {
+	if _, err := lookupEnvoyPath(opts.Config.DataplaneRuntime.BinaryPath); err != nil {
+		runLog.Error(err, "could not find the envoy executable in your path")
+		return nil, err
+	}
+	return &Envoy{opts: opts}, nil
 }
+
+var _ component.Component = &Envoy{}
 
 type Envoy struct {
 	opts Opts
@@ -89,10 +95,10 @@ func lookupEnvoyPath(configuredPath string) (string, error) {
 	return path, nil
 }
 
-func (e *Envoy) Run(stop <-chan struct{}) error {
+func (e *Envoy) Start(stop <-chan struct{}) error {
 	bootstrapConfig, err := e.opts.Generator(e.opts.Catalog.Apis.Bootstrap.Url, e.opts.Config)
 	if err != nil {
-		return errors.Wrapf(err, "failed to generate Envoy bootstrap config")
+		return errors.Errorf("Failed to generate Envoy bootstrap config. %v", err)
 	}
 	configFile, err := newConfigFile(e.opts.Config.DataplaneRuntime, bootstrapConfig)
 	if err != nil {
@@ -125,7 +131,9 @@ func (e *Envoy) Run(stop <-chan struct{}) error {
 	command := exec.CommandContext(ctx, resolvedPath, args...)
 	command.Stdout = e.opts.Stdout
 	command.Stderr = e.opts.Stderr
+	runLog.Info("starting Envoy")
 	if err := command.Start(); err != nil {
+		runLog.Error(err, "the envoy executable was found at "+resolvedPath+" but an error occurred when executing it")
 		return err
 	}
 	done := make(chan error, 1)
@@ -135,6 +143,7 @@ func (e *Envoy) Run(stop <-chan struct{}) error {
 
 	select {
 	case <-stop:
+		runLog.Info("stopping Envoy")
 		cancel()
 		return nil
 	case err := <-done:

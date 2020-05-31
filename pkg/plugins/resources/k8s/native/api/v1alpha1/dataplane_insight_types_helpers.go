@@ -1,10 +1,11 @@
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/plugins/resources/k8s/native/pkg/model"
 	"github.com/Kong/kuma/pkg/plugins/resources/k8s/native/pkg/registry"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func (pt *DataplaneInsight) GetObjectMeta() *metav1.ObjectMeta {
@@ -29,6 +30,10 @@ func (pt *DataplaneInsight) GetSpec() map[string]interface{} {
 
 func (pt *DataplaneInsight) SetSpec(spec map[string]interface{}) {
 	pt.Status = spec
+}
+
+func (pt *DataplaneInsight) Scope() model.Scope {
+	return model.ScopeNamespace
 }
 
 func (l *DataplaneInsightList) GetItems() []model.KubernetesObject {

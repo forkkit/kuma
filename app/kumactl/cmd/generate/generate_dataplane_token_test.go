@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
+
 	"github.com/Kong/kuma/app/kumactl/cmd"
 	kumactl_cmd "github.com/Kong/kuma/app/kumactl/pkg/cmd"
 	"github.com/Kong/kuma/app/kumactl/pkg/tokens"
@@ -11,9 +16,6 @@ import (
 	catalog_client "github.com/Kong/kuma/pkg/catalog/client"
 	config_kumactl "github.com/Kong/kuma/pkg/config/app/kumactl/v1alpha1"
 	test_catalog "github.com/Kong/kuma/pkg/test/catalog"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-	"github.com/spf13/cobra"
 )
 
 type staticDataplaneTokenGenerator struct {
@@ -40,7 +42,7 @@ var _ = Describe("kumactl generate dataplane-token", func() {
 		generator = &staticDataplaneTokenGenerator{}
 		ctx = &kumactl_cmd.RootContext{
 			Runtime: kumactl_cmd.RootRuntime{
-				NewDataplaneTokenClient: func(string, *config_kumactl.Context_DataplaneTokenApiCredentials) (tokens.DataplaneTokenClient, error) {
+				NewDataplaneTokenClient: func(string, *config_kumactl.Context_AdminApiCredentials) (tokens.DataplaneTokenClient, error) {
 					return generator, nil
 				},
 				NewCatalogClient: func(s string) (catalog_client.CatalogClient, error) {
@@ -64,14 +66,14 @@ var _ = Describe("kumactl generate dataplane-token", func() {
 
 	It("should generate a token", func() {
 		// when
-		rootCmd.SetArgs([]string{"generate", "dataplane-token", "--dataplane=example", "--mesh=pilot"})
+		rootCmd.SetArgs([]string{"generate", "dataplane-token", "--dataplane=example", "--mesh=demo"})
 		err := rootCmd.Execute()
 
 		// then
 		Expect(err).ToNot(HaveOccurred())
 
 		// and
-		Expect(buf.String()).To(Equal("token-for-example-pilot"))
+		Expect(buf.String()).To(Equal("token-for-example-demo"))
 	})
 
 	It("should generate a token for default mesh when it is not specified", func() {

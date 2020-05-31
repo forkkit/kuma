@@ -3,23 +3,27 @@ package runtime
 import (
 	"context"
 
+	"github.com/pkg/errors"
+
 	kuma_cp "github.com/Kong/kuma/pkg/config/app/kuma-cp"
 	"github.com/Kong/kuma/pkg/core"
-	builtin_ca "github.com/Kong/kuma/pkg/core/ca/builtin"
-	core_discovery "github.com/Kong/kuma/pkg/core/discovery"
+	core_ca "github.com/Kong/kuma/pkg/core/ca"
+	"github.com/Kong/kuma/pkg/core/datasource"
 	core_manager "github.com/Kong/kuma/pkg/core/resources/manager"
 	core_store "github.com/Kong/kuma/pkg/core/resources/store"
+	"github.com/Kong/kuma/pkg/core/runtime/component"
 	secret_manager "github.com/Kong/kuma/pkg/core/secrets/manager"
 	core_xds "github.com/Kong/kuma/pkg/core/xds"
-	"github.com/pkg/errors"
 )
 
 // BuilderContext provides access to Builder's interim state.
 type BuilderContext interface {
-	ComponentManager() ComponentManager
+	ComponentManager() component.Manager
 	ResourceStore() core_store.ResourceStore
 	XdsContext() core_xds.XdsContext
 	Config() kuma_cp.Config
+	SecretManager() secret_manager.SecretManager
+	DataSourceLoader() datasource.Loader
 	Extensions() context.Context
 }
 
@@ -28,21 +32,26 @@ var _ BuilderContext = &Builder{}
 // Builder represents a multi-step initialization process.
 type Builder struct {
 	cfg kuma_cp.Config
-	cm  ComponentManager
+	cm  component.Manager
 	rs  core_store.ResourceStore
 	rm  core_manager.ResourceManager
+	rom core_manager.ReadOnlyResourceManager
 	sm  secret_manager.SecretManager
-	bcm builtin_ca.BuiltinCaManager
-	dss []core_discovery.DiscoverySource
+	cam core_ca.Managers
 	xds core_xds.XdsContext
+	dsl datasource.Loader
 	ext context.Context
 }
 
 func BuilderFor(cfg kuma_cp.Config) *Builder {
-	return &Builder{cfg: cfg, ext: context.Background()}
+	return &Builder{
+		cfg: cfg,
+		ext: context.Background(),
+		cam: core_ca.Managers{},
+	}
 }
 
-func (b *Builder) WithComponentManager(cm ComponentManager) *Builder {
+func (b *Builder) WithComponentManager(cm component.Manager) *Builder {
 	b.cm = cm
 	return b
 }
@@ -57,18 +66,28 @@ func (b *Builder) WithResourceManager(rm core_manager.ResourceManager) *Builder 
 	return b
 }
 
+func (b *Builder) WithReadOnlyResourceManager(rom core_manager.ReadOnlyResourceManager) *Builder {
+	b.rom = rom
+	return b
+}
+
 func (b *Builder) WithSecretManager(sm secret_manager.SecretManager) *Builder {
 	b.sm = sm
 	return b
 }
 
-func (b *Builder) WithBuiltinCaManager(bcm builtin_ca.BuiltinCaManager) *Builder {
-	b.bcm = bcm
+func (b *Builder) WithCaManagers(cam core_ca.Managers) *Builder {
+	b.cam = cam
 	return b
 }
 
-func (b *Builder) AddDiscoverySource(ds core_discovery.DiscoverySource) *Builder {
-	b.dss = append(b.dss, ds)
+func (b *Builder) WithCaManager(name string, cam core_ca.Manager) *Builder {
+	b.cam[name] = cam
+	return b
+}
+
+func (b *Builder) WithDataSourceLoader(loader datasource.Loader) *Builder {
+	b.dsl = loader
 	return b
 }
 
@@ -92,18 +111,17 @@ func (b *Builder) Build() (Runtime, error) {
 	if b.rm == nil {
 		return nil, errors.Errorf("ResourceManager has not been configured")
 	}
+	if b.rom == nil {
+		return nil, errors.Errorf("ReadOnlyResourceManager has not been configured")
+	}
 	if b.sm == nil {
 		return nil, errors.Errorf("SecretManager has not been configured")
 	}
-	if b.bcm == nil {
-		return nil, errors.Errorf("BuiltinCaManager has not been configured")
-	}
-	// todo(jakubdyszkiewicz) restore when we've got store based discovery source
-	//if len(b.dss) == 0 {
-	//	return nil, errors.Errorf("DiscoverySources have not been configured")
-	//}
 	if b.xds == nil {
 		return nil, errors.Errorf("xDS Context has not been configured")
+	}
+	if b.dsl == nil {
+		return nil, errors.Errorf("DataSourceLoader has not been configured")
 	}
 	if b.ext == nil {
 		return nil, errors.Errorf("Extensions have been misconfigured")
@@ -115,17 +133,17 @@ func (b *Builder) Build() (Runtime, error) {
 		RuntimeContext: &runtimeContext{
 			cfg: b.cfg,
 			rm:  b.rm,
+			rom: b.rom,
 			sm:  b.sm,
-			bcm: b.bcm,
-			dss: b.dss,
+			cam: b.cam,
 			xds: b.xds,
 			ext: b.ext,
 		},
-		ComponentManager: b.cm,
+		Manager: b.cm,
 	}, nil
 }
 
-func (b *Builder) ComponentManager() ComponentManager {
+func (b *Builder) ComponentManager() component.Manager {
 	return b.cm
 }
 func (b *Builder) ResourceStore() core_store.ResourceStore {
@@ -134,14 +152,23 @@ func (b *Builder) ResourceStore() core_store.ResourceStore {
 func (b *Builder) SecretManager() secret_manager.SecretManager {
 	return b.sm
 }
-func (b *Builder) BuiltinCaManager() builtin_ca.BuiltinCaManager {
-	return b.bcm
+func (b *Builder) ResourceManager() core_manager.ResourceManager {
+	return b.rm
+}
+func (b *Builder) ReadOnlyResourceManager() core_manager.ReadOnlyResourceManager {
+	return b.rom
+}
+func (b *Builder) CaManagers() core_ca.Managers {
+	return b.cam
 }
 func (b *Builder) XdsContext() core_xds.XdsContext {
 	return b.xds
 }
 func (b *Builder) Config() kuma_cp.Config {
 	return b.cfg
+}
+func (b *Builder) DataSourceLoader() datasource.Loader {
+	return b.dsl
 }
 func (b *Builder) Extensions() context.Context {
 	return b.ext

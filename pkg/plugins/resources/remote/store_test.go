@@ -9,10 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Kong/kuma/api/mesh/v1alpha1"
-	api_server_types "github.com/Kong/kuma/pkg/api-server/types"
 	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
+	errors_types "github.com/Kong/kuma/pkg/core/rest/errors/types"
 	sample_api "github.com/Kong/kuma/pkg/test/apis/sample/v1alpha1"
 	"github.com/Kong/kuma/pkg/test/resources/model"
 
@@ -29,8 +30,9 @@ import (
 
 var _ = Describe("RemoteStore", func() {
 
+	creationTime, _ := time.Parse(time.RFC3339, "2018-07-17T16:05:36.995Z")
+	modificationTime, _ := time.Parse(time.RFC3339, "2019-07-17T16:05:36.995Z")
 	type RequestAssertion = func(req *http.Request)
-
 	setupStore := func(file string, assertion RequestAssertion) core_store.ResourceStore {
 		client := &http.Client{
 			Transport: RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
@@ -72,7 +74,6 @@ var _ = Describe("RemoteStore", func() {
 		}
 		return remote.NewStore(client, apis)
 	}
-
 	Describe("Get()", func() {
 		It("should get resource", func() {
 			// setup
@@ -83,7 +84,7 @@ var _ = Describe("RemoteStore", func() {
 
 			// when
 			resource := sample_core.TrafficRouteResource{}
-			err := store.Get(context.Background(), &resource, core_store.GetByKey("", name, "default"))
+			err := store.Get(context.Background(), &resource, core_store.GetByKey(name, "default"))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -91,7 +92,8 @@ var _ = Describe("RemoteStore", func() {
 
 			Expect(resource.GetMeta().GetName()).To(Equal("res-1"))
 			Expect(resource.GetMeta().GetMesh()).To(Equal("default"))
-			Expect(resource.GetMeta().GetNamespace()).To(Equal(""))
+			Expect(resource.GetMeta().GetCreationTime()).Should(Equal(creationTime))
+			Expect(resource.GetMeta().GetModificationTime()).Should(Equal(modificationTime))
 		})
 
 		It("should get mesh resource", func() {
@@ -102,14 +104,15 @@ var _ = Describe("RemoteStore", func() {
 
 			// when
 			resource := mesh.MeshResource{}
-			err := store.Get(context.Background(), &resource, core_store.GetByKey("", meshName, meshName))
+			err := store.Get(context.Background(), &resource, core_store.GetByKey(meshName, meshName))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(resource.GetMeta().GetName()).To(Equal(meshName))
 			Expect(resource.GetMeta().GetMesh()).To(Equal(meshName))
-			Expect(resource.GetMeta().GetNamespace()).To(Equal(""))
+			Expect(resource.GetMeta().GetCreationTime()).Should(Equal(creationTime))
+			Expect(resource.GetMeta().GetModificationTime()).Should(Equal(modificationTime))
 		})
 
 		It("should parse kuma api server error", func() {
@@ -123,12 +126,12 @@ var _ = Describe("RemoteStore", func() {
 
 			// when
 			resource := mesh.MeshResource{}
-			err := store.Get(context.Background(), &resource, core_store.GetByKey("", "test", "test"))
+			err := store.Get(context.Background(), &resource, core_store.GetByKey("test", "test"))
 
 			// then
 			Expect(err).To(HaveOccurred())
 
-			Expect(err).To(Equal(&api_server_types.Error{
+			Expect(err).To(Equal(&errors_types.Error{
 				Title:   "Could not get resource",
 				Details: "Internal Server Error",
 			}))
@@ -145,7 +148,7 @@ var _ = Describe("RemoteStore", func() {
 
 			// when
 			resource := mesh.MeshResource{}
-			err := store.Get(context.Background(), &resource, core_store.GetByKey("", "test", "test"))
+			err := store.Get(context.Background(), &resource, core_store.GetByKey("test", "test"))
 
 			// then
 			Expect(core_store.IsResourceNotFound(err)).To(BeTrue())
@@ -160,7 +163,7 @@ var _ = Describe("RemoteStore", func() {
 				Expect(req.URL.Path).To(Equal(fmt.Sprintf("/meshes/default/traffic-routes/%s", name)))
 				bytes, err := ioutil.ReadAll(req.Body)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(string(bytes)).To(Equal(`{"mesh":"default","name":"res-1","path":"/some-path","type":"SampleTrafficRoute"}`))
+				Expect(bytes).To(MatchJSON(`{"mesh":"default","name":"res-1","path":"/some-path","type":"SampleTrafficRoute","creationTime": "0001-01-01T00:00:00Z","modificationTime": "0001-01-01T00:00:00Z"}`))
 			})
 
 			// when
@@ -169,7 +172,7 @@ var _ = Describe("RemoteStore", func() {
 					Path: "/some-path",
 				},
 			}
-			err := store.Create(context.Background(), &resource, core_store.CreateByKey("", name, "default"))
+			err := store.Create(context.Background(), &resource, core_store.CreateByKey(name, "default"))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -182,14 +185,14 @@ var _ = Describe("RemoteStore", func() {
 				Expect(req.URL.Path).To(Equal(fmt.Sprintf("/meshes/%s", meshName)))
 				bytes, err := ioutil.ReadAll(req.Body)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(string(bytes)).To(Equal(`{"mesh":"someMesh","name":"someMesh","type":"Mesh"}`))
+				Expect(bytes).To(MatchJSON(`{"mesh":"someMesh","name":"someMesh","type":"Mesh","creationTime": "0001-01-01T00:00:00Z","modificationTime": "0001-01-01T00:00:00Z"}`))
 			})
 
 			// when
 			resource := mesh.MeshResource{
 				Spec: v1alpha1.Mesh{},
 			}
-			err := store.Create(context.Background(), &resource, core_store.CreateByKey("", meshName, meshName))
+			err := store.Create(context.Background(), &resource, core_store.CreateByKey(meshName, meshName))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -211,14 +214,14 @@ var _ = Describe("RemoteStore", func() {
 			store := setupErrorStore(400, json)
 
 			// when
-			err := store.Create(context.Background(), &mesh.MeshResource{}, core_store.CreateByKey("", "test", "test"))
+			err := store.Create(context.Background(), &mesh.MeshResource{}, core_store.CreateByKey("test", "test"))
 
 			// then
 			Expect(err).To(HaveOccurred())
-			Expect(err).To(Equal(&api_server_types.Error{
+			Expect(err).To(Equal(&errors_types.Error{
 				Title:   "Could not process resource",
 				Details: "Resource is not valid",
-				Causes: []api_server_types.Cause{
+				Causes: []errors_types.Cause{
 					{
 						Field:   "mtls",
 						Message: "cannot be empty",
@@ -236,7 +239,7 @@ var _ = Describe("RemoteStore", func() {
 				Expect(req.URL.Path).To(Equal(fmt.Sprintf("/meshes/default/traffic-routes/%s", name)))
 				bytes, err := ioutil.ReadAll(req.Body)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(string(bytes)).To(Equal(`{"mesh":"default","name":"res-1","path":"/some-path","type":"SampleTrafficRoute"}`))
+				Expect(bytes).To(MatchJSON(`{"mesh":"default","name":"res-1","path":"/some-path","type":"SampleTrafficRoute","creationTime": "0001-01-01T00:00:00Z","modificationTime": "0001-01-01T00:00:00Z"}`))
 			})
 
 			// when
@@ -245,9 +248,8 @@ var _ = Describe("RemoteStore", func() {
 					Path: "/some-path",
 				},
 				Meta: &model.ResourceMeta{
-					Mesh:      "default",
-					Name:      name,
-					Namespace: "",
+					Mesh: "default",
+					Name: name,
 				},
 			}
 			err := store.Update(context.Background(), &resource)
@@ -263,24 +265,25 @@ var _ = Describe("RemoteStore", func() {
 				Expect(req.URL.Path).To(Equal(fmt.Sprintf("/meshes/%s", meshName)))
 				bytes, err := ioutil.ReadAll(req.Body)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(string(bytes)).To(Equal(`{"mesh":"someMesh","mtls":{"ca":{"builtin":{}}},"name":"someMesh","type":"Mesh"}`))
+				Expect(bytes).To(MatchJSON(`{"mesh":"someMesh","mtls":{"enabledBackend":"builtin","backends":[{"name":"builtin","type":"builtin"}]},"name":"someMesh","type":"Mesh","creationTime": "0001-01-01T00:00:00Z","modificationTime": "0001-01-01T00:00:00Z"}`))
 			})
 
 			// when
 			resource := mesh.MeshResource{
 				Spec: v1alpha1.Mesh{
 					Mtls: &v1alpha1.Mesh_Mtls{
-						Ca: &v1alpha1.CertificateAuthority{
-							Type: &v1alpha1.CertificateAuthority_Builtin_{
-								Builtin: &v1alpha1.CertificateAuthority_Builtin{},
+						EnabledBackend: "builtin",
+						Backends: []*v1alpha1.CertificateAuthorityBackend{
+							{
+								Name: "builtin",
+								Type: "builtin",
 							},
 						},
 					},
 				},
 				Meta: &model.ResourceMeta{
-					Mesh:      meshName,
-					Name:      meshName,
-					Namespace: "",
+					Mesh: meshName,
+					Name: meshName,
 				},
 			}
 			err := store.Update(context.Background(), &resource)
@@ -297,9 +300,8 @@ var _ = Describe("RemoteStore", func() {
 			resource := mesh.MeshResource{
 				Spec: v1alpha1.Mesh{},
 				Meta: &model.ResourceMeta{
-					Mesh:      "default",
-					Name:      "default",
-					Namespace: "",
+					Mesh: "default",
+					Name: "default",
 				},
 			}
 			err := store.Create(context.Background(), &resource)
@@ -339,10 +341,10 @@ var _ = Describe("RemoteStore", func() {
 			// then
 			Expect(err).To(HaveOccurred())
 
-			Expect(err).To(Equal(&api_server_types.Error{
+			Expect(err).To(Equal(&errors_types.Error{
 				Title:   "Could not process resource",
 				Details: "Resource is not valid",
-				Causes: []api_server_types.Cause{
+				Causes: []errors_types.Cause{
 					{
 						Field:   "mtls",
 						Message: "cannot be empty",
@@ -360,28 +362,54 @@ var _ = Describe("RemoteStore", func() {
 		It("should successfully list known resources", func() {
 			// given
 			store := setupStore("list.json", func(req *http.Request) {
-				Expect(req.URL.Path).To(Equal(fmt.Sprintf("/meshes/pilot/traffic-routes")))
+				Expect(req.URL.Path).To(Equal(fmt.Sprintf("/meshes/demo/traffic-routes")))
 			})
 
 			// when
 			rs := sample_core.TrafficRouteResourceList{}
-			err := store.List(context.Background(), &rs, core_store.ListByMesh("pilot"))
+			err := store.List(context.Background(), &rs, core_store.ListByMesh("demo"))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
 			Expect(rs.Items).To(HaveLen(2))
 			// and
-			Expect(rs.Items[0].Meta.GetNamespace()).To(Equal(""))
 			Expect(rs.Items[0].Meta.GetName()).To(Equal("one"))
 			Expect(rs.Items[0].Meta.GetMesh()).To(Equal("default"))
 			Expect(rs.Items[0].Meta.GetVersion()).To(Equal(""))
 			Expect(rs.Items[0].Spec.Path).To(Equal("/example"))
+			Expect(rs.Items[0].Meta.GetCreationTime()).Should(Equal(creationTime))
+			Expect(rs.Items[0].Meta.GetModificationTime()).Should(Equal(modificationTime))
 			// and
-			Expect(rs.Items[1].Meta.GetNamespace()).To(Equal(""))
 			Expect(rs.Items[1].Meta.GetName()).To(Equal("two"))
-			Expect(rs.Items[1].Meta.GetMesh()).To(Equal("pilot"))
+			Expect(rs.Items[1].Meta.GetMesh()).To(Equal("demo"))
 			Expect(rs.Items[1].Meta.GetVersion()).To(Equal(""))
 			Expect(rs.Items[1].Spec.Path).To(Equal("/another"))
+			Expect(rs.Items[1].Meta.GetCreationTime()).Should(Equal(creationTime))
+			Expect(rs.Items[1].Meta.GetModificationTime()).Should(Equal(modificationTime))
+		})
+
+		It("should list known resources using pagination", func() {
+			// given
+			store := setupStore("list-pagination.json", func(req *http.Request) {
+				Expect(req.URL.Path).To(Equal(fmt.Sprintf("/meshes/demo/traffic-routes")))
+				Expect(req.URL.Query().Get("size")).To(Equal("1"))
+				Expect(req.URL.Query().Get("offset")).To(Equal("2"))
+			})
+
+			// when
+			rs := sample_core.TrafficRouteResourceList{}
+			err := store.List(context.Background(), &rs, core_store.ListByMesh("demo"), core_store.ListByPage(1, "2"))
+
+			// then
+			Expect(err).ToNot(HaveOccurred())
+			Expect(rs.Items).To(HaveLen(1))
+			// and
+			Expect(rs.Items[0].Meta.GetName()).To(Equal("one"))
+			Expect(rs.Items[0].Meta.GetMesh()).To(Equal("default"))
+			Expect(rs.Items[0].Meta.GetVersion()).To(Equal(""))
+			Expect(rs.Items[0].Spec.Path).To(Equal("/example"))
+			Expect(rs.Items[0].Meta.GetCreationTime()).Should(Equal(creationTime))
+			Expect(rs.Items[0].Meta.GetModificationTime()).Should(Equal(modificationTime))
 		})
 
 		It("should list meshes", func() {
@@ -398,13 +426,15 @@ var _ = Describe("RemoteStore", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(meshes.Items).To(HaveLen(2))
 
-			Expect(meshes.Items[0].Meta.GetNamespace()).To(Equal(""))
 			Expect(meshes.Items[0].Meta.GetName()).To(Equal("mesh-1"))
 			Expect(meshes.Items[0].Meta.GetMesh()).To(Equal("mesh-1"))
+			Expect(meshes.Items[0].Meta.GetCreationTime()).Should(Equal(creationTime))
+			Expect(meshes.Items[0].Meta.GetModificationTime()).Should(Equal(modificationTime))
 
-			Expect(meshes.Items[1].Meta.GetNamespace()).To(Equal(""))
 			Expect(meshes.Items[1].Meta.GetName()).To(Equal("mesh-2"))
 			Expect(meshes.Items[1].Meta.GetMesh()).To(Equal("mesh-2"))
+			Expect(meshes.Items[1].Meta.GetCreationTime()).Should(Equal(creationTime))
+			Expect(meshes.Items[1].Meta.GetModificationTime()).Should(Equal(modificationTime))
 		})
 
 		It("should return error from the api server", func() {
@@ -435,7 +465,7 @@ var _ = Describe("RemoteStore", func() {
 			// then
 			Expect(err).To(HaveOccurred())
 
-			Expect(err).To(Equal(&api_server_types.Error{
+			Expect(err).To(Equal(&errors_types.Error{
 				Title:   "Could not list resource",
 				Details: "Internal Server Error",
 			}))
@@ -453,7 +483,7 @@ var _ = Describe("RemoteStore", func() {
 
 			// when
 			resource := sample_core.TrafficRouteResource{}
-			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey("default", name, meshName))
+			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey(name, meshName))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -468,7 +498,7 @@ var _ = Describe("RemoteStore", func() {
 
 			// when
 			resource := mesh.MeshResource{}
-			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey("default", meshName, meshName))
+			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey(meshName, meshName))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -480,7 +510,7 @@ var _ = Describe("RemoteStore", func() {
 
 			// when
 			resource := sample_core.TrafficRouteResource{}
-			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey("default", "tr-1", "mesh-1"))
+			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey("tr-1", "mesh-1"))
 
 			// then
 			Expect(err).To(MatchError("(400): some error from the server"))
@@ -497,7 +527,7 @@ var _ = Describe("RemoteStore", func() {
 
 			// when
 			resource := sample_core.TrafficRouteResource{}
-			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey("default", "tr-1", "mesh-1"))
+			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey("tr-1", "mesh-1"))
 
 			// then
 			Expect(core_store.IsResourceNotFound(err)).To(BeTrue())
@@ -513,12 +543,12 @@ var _ = Describe("RemoteStore", func() {
 
 			// when
 			resource := sample_core.TrafficRouteResource{}
-			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey("default", "tr-1", "mesh-1"))
+			err := store.Delete(context.Background(), &resource, core_store.DeleteByKey("tr-1", "mesh-1"))
 
 			// then
 			Expect(err).To(HaveOccurred())
 
-			Expect(err).To(Equal(&api_server_types.Error{
+			Expect(err).To(Equal(&errors_types.Error{
 				Title:   "Could not delete resource",
 				Details: "Internal Server Error",
 			}))

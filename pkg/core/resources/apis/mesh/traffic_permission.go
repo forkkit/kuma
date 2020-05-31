@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"errors"
+
 	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/core/resources/model"
 	"github.com/Kong/kuma/pkg/core/resources/registry"
@@ -43,7 +44,8 @@ func (t *TrafficPermissionResource) SetSpec(spec model.ResourceSpec) error {
 var _ model.ResourceList = &TrafficPermissionResourceList{}
 
 type TrafficPermissionResourceList struct {
-	Items []*TrafficPermissionResource
+	Items      []*TrafficPermissionResource
+	Pagination model.Pagination
 }
 
 func (l *TrafficPermissionResourceList) GetItems() []model.Resource {
@@ -66,6 +68,17 @@ func (l *TrafficPermissionResourceList) AddItem(r model.Resource) error {
 	} else {
 		return model.ErrorInvalidItemType((*TrafficPermissionResource)(nil), r)
 	}
+}
+func (l *TrafficPermissionResourceList) GetPagination() *model.Pagination {
+	return &l.Pagination
+}
+
+func (t *TrafficPermissionResource) Sources() []*mesh_proto.Selector {
+	return t.Spec.GetSources()
+}
+
+func (t *TrafficPermissionResource) Destinations() []*mesh_proto.Selector {
+	return t.Spec.GetDestinations()
 }
 
 func init() {

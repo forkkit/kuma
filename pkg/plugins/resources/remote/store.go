@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/Kong/kuma/pkg/api-server/types"
+	"io/ioutil"
+	"net/http"
+	"strconv"
+
+	"github.com/pkg/errors"
+
 	"github.com/Kong/kuma/pkg/core/resources/model"
 	"github.com/Kong/kuma/pkg/core/resources/model/rest"
 	"github.com/Kong/kuma/pkg/core/resources/store"
+	"github.com/Kong/kuma/pkg/core/rest/errors/types"
 	util_http "github.com/Kong/kuma/pkg/util/http"
-	"io/ioutil"
-	"net/http"
-
-	"github.com/pkg/errors"
 )
 
 func NewStore(client util_http.Client, api rest.Api) store.ResourceStore {
@@ -42,7 +44,6 @@ func (s *remoteStore) Create(ctx context.Context, res model.Resource, fs ...stor
 	return nil
 }
 func (s *remoteStore) Update(ctx context.Context, res model.Resource, fs ...store.UpdateOptionsFunc) error {
-	_ = store.NewUpdateOptions(fs...)
 	meta := rest.ResourceMeta{
 		Type: string(res.GetType()),
 		Name: res.GetMeta().GetName(),
@@ -77,13 +78,16 @@ func (s *remoteStore) upsert(ctx context.Context, res model.Resource, meta rest.
 		return err
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return errors.Errorf("(%d): %s", statusCode, string(b))
+		if statusCode == http.StatusMethodNotAllowed {
+			return errors.Errorf("%s", string(b))
+		} else {
+			return errors.Errorf("(%d): %s", statusCode, string(b))
+		}
 	}
 	res.SetMeta(remoteMeta{
-		Namespace: "",
-		Name:      meta.Name,
-		Mesh:      meta.Mesh,
-		Version:   "",
+		Name:    meta.Name,
+		Mesh:    meta.Mesh,
+		Version: "",
 	})
 	return nil
 }
@@ -100,12 +104,16 @@ func (s *remoteStore) Delete(ctx context.Context, res model.Resource, fs ...stor
 	statusCode, b, err := s.doRequest(ctx, req)
 	if err != nil {
 		if statusCode == 404 {
-			return store.ErrorResourceNotFound(res.GetType(), opts.Namespace, opts.Name, opts.Mesh)
+			return store.ErrorResourceNotFound(res.GetType(), opts.Name, opts.Mesh)
 		}
 		return err
 	}
 	if statusCode != http.StatusOK {
-		return errors.Errorf("(%d): %s", statusCode, string(b))
+		if statusCode == http.StatusMethodNotAllowed {
+			return errors.Errorf("%s", string(b))
+		} else {
+			return errors.Errorf("(%d): %s", statusCode, string(b))
+		}
 	}
 	return nil
 }
@@ -122,7 +130,7 @@ func (s *remoteStore) Get(ctx context.Context, res model.Resource, fs ...store.G
 	statusCode, b, err := s.doRequest(ctx, req)
 	if err != nil {
 		if statusCode == 404 {
-			return store.ErrorResourceNotFound(res.GetType(), opts.Namespace, opts.Name, opts.Mesh)
+			return store.ErrorResourceNotFound(res.GetType(), opts.Name, opts.Mesh)
 		}
 		return err
 	}
@@ -142,6 +150,15 @@ func (s *remoteStore) List(ctx context.Context, rs model.ResourceList, fs ...sto
 	if err != nil {
 		return err
 	}
+	query := req.URL.Query()
+	if opts.PageOffset != "" {
+		query.Add("offset", opts.PageOffset)
+	}
+	if opts.PageSize != 0 {
+		query.Add("size", strconv.Itoa(opts.PageSize))
+	}
+	req.URL.RawQuery = query.Encode()
+
 	statusCode, b, err := s.doRequest(ctx, req)
 	if err != nil {
 		return err

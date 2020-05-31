@@ -2,21 +2,29 @@ package apply
 
 import (
 	"context"
-	kumactl_cmd "github.com/Kong/kuma/app/kumactl/pkg/cmd"
-	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
-	"github.com/Kong/kuma/pkg/core/resources/model"
-	"github.com/Kong/kuma/pkg/core/resources/model/rest"
-	"github.com/Kong/kuma/pkg/core/resources/registry"
-	"github.com/Kong/kuma/pkg/core/resources/store"
-	"github.com/Kong/kuma/pkg/util/proto"
-	"github.com/ghodss/yaml"
-	"github.com/hoisie/mustache"
-	"github.com/pkg/errors"
-	"github.com/spf13/cobra"
+	"crypto/tls"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Kong/kuma/pkg/core/resources/apis/system"
+
+	"github.com/ghodss/yaml"
+	"github.com/hoisie/mustache"
+	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
+
+	kumactl_cmd "github.com/Kong/kuma/app/kumactl/pkg/cmd"
+	"github.com/Kong/kuma/app/kumactl/pkg/output"
+	"github.com/Kong/kuma/app/kumactl/pkg/output/printers"
+	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
+	"github.com/Kong/kuma/pkg/core/resources/model"
+	"github.com/Kong/kuma/pkg/core/resources/model/rest"
+	rest_types "github.com/Kong/kuma/pkg/core/resources/model/rest"
+	"github.com/Kong/kuma/pkg/core/resources/registry"
+	"github.com/Kong/kuma/pkg/core/resources/store"
+	"github.com/Kong/kuma/pkg/util/proto"
 )
 
 const (
@@ -27,8 +35,9 @@ type applyContext struct {
 	*kumactl_cmd.RootContext
 
 	args struct {
-		file string
-		vars map[string]string
+		file   string
+		vars   map[string]string
+		dryRun bool
 	}
 }
 
@@ -50,7 +59,8 @@ func NewApplyCmd(pctx *kumactl_cmd.RootContext) *cobra.Command {
 			} else {
 				if strings.HasPrefix(ctx.args.file, "http://") || strings.HasPrefix(ctx.args.file, "https://") {
 					client := &http.Client{
-						Timeout: timeout,
+						Timeout:   timeout,
+						Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 					}
 					req, err := http.NewRequest("GET", ctx.args.file, nil)
 					if err != nil {
@@ -60,8 +70,8 @@ func NewApplyCmd(pctx *kumactl_cmd.RootContext) *cobra.Command {
 					if err != nil {
 						return errors.Wrap(err, "error with GET http request")
 					}
-					if resp.StatusCode != 200 {
-						return errors.Wrap(err, "errpr while retrieving URL")
+					if resp.StatusCode != http.StatusOK {
+						return errors.Wrap(err, "error while retrieving URL")
 					}
 					defer resp.Body.Close()
 					b, err = ioutil.ReadAll(resp.Body)
@@ -85,7 +95,24 @@ func NewApplyCmd(pctx *kumactl_cmd.RootContext) *cobra.Command {
 			if err != nil {
 				return errors.Wrap(err, "YAML contains invalid resource")
 			}
-			rs, err := pctx.CurrentResourceStore()
+
+			if ctx.args.dryRun {
+				p, err := printers.NewGenericPrinter(output.YAMLFormat)
+				if err != nil {
+					return err
+				}
+				if err := p.Print(rest_types.From.Resource(res), cmd.OutOrStdout()); err != nil {
+					return err
+				}
+				return nil
+			}
+
+			var rs store.ResourceStore
+			if res.GetType() == system.SecretType { // Secret is exposed via Admin Server. It will be merged into API Server eventually.
+				rs, err = pctx.CurrentAdminResourceStore()
+			} else {
+				rs, err = pctx.CurrentResourceStore()
+			}
 			if err != nil {
 				return err
 			}
@@ -98,13 +125,39 @@ func NewApplyCmd(pctx *kumactl_cmd.RootContext) *cobra.Command {
 	}
 	cmd.PersistentFlags().StringVarP(&ctx.args.file, "file", "f", "", "Path to file to apply")
 	cmd.PersistentFlags().StringToStringVarP(&ctx.args.vars, "var", "v", map[string]string{}, "Variable to replace in configuration")
+	cmd.PersistentFlags().BoolVar(&ctx.args.dryRun, "dry-run", false, "Resolve variable and prints result out without actual applying")
 	return cmd
+}
+
+type contextMap map[string]interface{}
+
+func (cm contextMap) merge(other contextMap) {
+	for k, v := range other {
+		cm[k] = v
+	}
+}
+
+func newContextMap(key, value string) contextMap {
+	if !strings.Contains(key, ".") {
+		return map[string]interface{}{
+			key: value,
+		}
+	}
+
+	parts := strings.SplitAfterN(key, ".", 2)
+	return map[string]interface{}{
+		parts[0][:len(parts[0])-1]: newContextMap(parts[1], value),
+	}
 }
 
 func processConfigTemplate(config string, values map[string]string) ([]byte, error) {
 	// TODO error checking -- match number of placeholders with number of
 	// passed values
-	data := mustache.Render(config, values)
+	ctx := contextMap{}
+	for k, v := range values {
+		ctx.merge(newContextMap(k, v))
+	}
+	data := mustache.Render(config, ctx)
 	return []byte(data), nil
 }
 
@@ -114,9 +167,9 @@ func upsert(rs store.ResourceStore, res model.Resource) error {
 		return err
 	}
 	meta := res.GetMeta()
-	if err := rs.Get(context.Background(), newRes, store.GetByKey(meta.GetNamespace(), meta.GetName(), meta.GetMesh())); err != nil {
+	if err := rs.Get(context.Background(), newRes, store.GetByKey(meta.GetName(), meta.GetMesh())); err != nil {
 		if store.IsResourceNotFound(err) {
-			return rs.Create(context.Background(), res, store.CreateByKey(meta.GetNamespace(), meta.GetName(), meta.GetMesh()))
+			return rs.Create(context.Background(), res, store.CreateByKey(meta.GetName(), meta.GetMesh()))
 		} else {
 			return err
 		}
@@ -163,8 +216,8 @@ func (m meta) GetName() string {
 	return m.Name
 }
 
-func (m meta) GetNamespace() string {
-	return "default"
+func (m meta) GetNameExtensions() model.ResourceNameExtensions {
+	return model.ResourceNameExtensionsUnsupported
 }
 
 func (m meta) GetVersion() string {
@@ -173,4 +226,12 @@ func (m meta) GetVersion() string {
 
 func (m meta) GetMesh() string {
 	return m.Mesh
+}
+
+func (m meta) GetCreationTime() time.Time {
+	return time.Unix(0, 0).UTC() // the date doesn't matter since it is set on server side anyways
+}
+
+func (m meta) GetModificationTime() time.Time {
+	return time.Unix(0, 0).UTC() // the date doesn't matter since it is set on server side anyways
 }

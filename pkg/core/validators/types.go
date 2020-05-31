@@ -53,18 +53,46 @@ func (v *ValidationError) Add(err ValidationError) {
 	v.AddError("", err)
 }
 
+func (v *ValidationError) AddErrorAt(path PathBuilder, validationErr ValidationError) {
+	v.AddError(path.String(), validationErr)
+}
+
 func (v *ValidationError) AddError(rootField string, validationErr ValidationError) {
 	rootPrefix := ""
 	if rootField != "" {
 		rootPrefix += fmt.Sprintf("%s.", rootField)
 	}
 	for _, violation := range validationErr.Violations {
+		field := ""
+		if violation.Field == "" {
+			field = rootField
+		} else {
+			field = fmt.Sprintf("%s%s", rootPrefix, violation.Field)
+		}
 		newViolation := Violation{
-			Field:   fmt.Sprintf("%s%s", rootPrefix, violation.Field),
+			Field:   field,
 			Message: violation.Message,
 		}
 		v.Violations = append(v.Violations, newViolation)
 	}
+}
+
+// Transform returns a new ValidationError with every violation
+// transformed by a given transformFunc.
+func (v *ValidationError) Transform(transformFunc func(Violation) Violation) *ValidationError {
+	if v == nil {
+		return nil
+	}
+	if transformFunc == nil || len(v.Violations) == 0 {
+		return &(*v) // we want to guarantee that Transform always returns a new object
+	}
+	result := ValidationError{
+		Violations: make([]Violation, len(v.Violations)),
+	}
+	for i := range v.Violations {
+		result.Violations[i] = transformFunc(v.Violations[i])
+	}
+	return &result
 }
 
 func IsValidationError(err error) bool {

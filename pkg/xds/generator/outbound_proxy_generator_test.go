@@ -4,8 +4,6 @@ import (
 	"io/ioutil"
 	"path/filepath"
 
-	"github.com/Kong/kuma/pkg/core/logs"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
@@ -23,10 +21,16 @@ import (
 
 var _ = Describe("OutboundProxyGenerator", func() {
 
+	meta := &test_model.ResourceMeta{
+		Mesh: "mesh1",
+		Name: "mesh1",
+	}
 	plainCtx := xds_context.Context{
 		ControlPlane: &xds_context.ControlPlaneContext{},
 		Mesh: xds_context.MeshContext{
-			TlsEnabled: false,
+			Resource: &mesh_core.MeshResource{
+				Meta: meta,
+			},
 		},
 	}
 
@@ -36,7 +40,20 @@ var _ = Describe("OutboundProxyGenerator", func() {
 			SdsTlsCert:  []byte("12345"),
 		},
 		Mesh: xds_context.MeshContext{
-			TlsEnabled: true,
+			Resource: &mesh_core.MeshResource{
+				Spec: mesh_proto.Mesh{
+					Mtls: &mesh_proto.Mesh_Mtls{
+						EnabledBackend: "builtin",
+						Backends: []*mesh_proto.CertificateAuthorityBackend{
+							{
+								Name: "builtin",
+								Type: "builtin",
+							},
+						},
+					},
+				},
+				Meta: meta,
+			},
 		},
 	}
 
@@ -55,7 +72,7 @@ var _ = Describe("OutboundProxyGenerator", func() {
 			Expect(util_proto.FromYAML([]byte(given.dataplane), &dataplane)).To(Succeed())
 
 			proxy := &model.Proxy{
-				Id: model.ProxyId{Name: "side-car", Namespace: "default", Mesh: "default"},
+				Id: model.ProxyId{Name: "side-car", Mesh: "default"},
 				Dataplane: &mesh_core.DataplaneResource{
 					Meta: &test_model.ResourceMeta{
 						Version: "1",
@@ -63,6 +80,22 @@ var _ = Describe("OutboundProxyGenerator", func() {
 					Spec: dataplane,
 				},
 				TrafficRoutes: model.RouteMap{
+					"api-http": &mesh_core.TrafficRouteResource{
+						Spec: mesh_proto.TrafficRoute{
+							Conf: []*mesh_proto.TrafficRoute_WeightedDestination{{
+								Weight:      100,
+								Destination: mesh_proto.MatchService("api-http"),
+							}},
+						},
+					},
+					"api-tcp": &mesh_core.TrafficRouteResource{
+						Spec: mesh_proto.TrafficRoute{
+							Conf: []*mesh_proto.TrafficRoute_WeightedDestination{{
+								Weight:      100,
+								Destination: mesh_proto.MatchService("api-tcp"),
+							}},
+						},
+					},
 					"backend": &mesh_core.TrafficRouteResource{
 						Spec: mesh_proto.TrafficRoute{
 							Conf: []*mesh_proto.TrafficRoute_WeightedDestination{{
@@ -87,6 +120,12 @@ var _ = Describe("OutboundProxyGenerator", func() {
 					},
 				},
 				OutboundSelectors: model.DestinationMap{
+					"api-http": model.TagSelectorSet{
+						{"service": "api-http"},
+					},
+					"api-tcp": model.TagSelectorSet{
+						{"service": "api-tcp"},
+					},
 					"backend": model.TagSelectorSet{
 						{"service": "backend"},
 					},
@@ -97,7 +136,15 @@ var _ = Describe("OutboundProxyGenerator", func() {
 					},
 				},
 				OutboundTargets: model.EndpointMap{
-					"backend": []model.Endpoint{
+					"api-http": []model.Endpoint{ // notice that all endpoints have tag `protocol: http`
+						{Target: "192.168.0.4", Port: 8084, Tags: map[string]string{"service": "api-http", "protocol": "http", "region": "us"}},
+						{Target: "192.168.0.5", Port: 8085, Tags: map[string]string{"service": "api-http", "protocol": "http", "region": "eu"}},
+					},
+					"api-tcp": []model.Endpoint{ // notice that not every endpoint has a `protocol: http` tag
+						{Target: "192.168.0.6", Port: 8086, Tags: map[string]string{"service": "api-tcp", "protocol": "http", "region": "us"}},
+						{Target: "192.168.0.7", Port: 8087, Tags: map[string]string{"service": "api-tcp", "region": "eu"}},
+					},
+					"backend": []model.Endpoint{ // notice that not every endpoint has a tag `protocol: http`
 						{Target: "192.168.0.1", Port: 8081, Tags: map[string]string{"service": "backend", "region": "us"}},
 						{Target: "192.168.0.2", Port: 8082},
 					},
@@ -105,7 +152,22 @@ var _ = Describe("OutboundProxyGenerator", func() {
 						{Target: "192.168.0.3", Port: 5432, Tags: map[string]string{"service": "db", "role": "master"}},
 					},
 				},
-				Logs:     logs.NewMatchedLogs(),
+				Logs: model.LogMap{
+					"api-http": &mesh_proto.LoggingBackend{
+						Name: "file",
+						Type: mesh_proto.LoggingFileType,
+						Conf: util_proto.MustToStruct(&mesh_proto.FileLoggingBackendConfig{
+							Path: "/var/log",
+						}),
+					},
+					"api-tcp": &mesh_proto.LoggingBackend{
+						Name: "elk",
+						Type: mesh_proto.LoggingTcpType,
+						Conf: util_proto.MustToStruct(&mesh_proto.TcpLoggingBackendConfig{
+							Address: "logstash:1234",
+						}),
+					},
+				},
 				Metadata: &model.DataplaneMetadata{},
 			}
 
@@ -115,9 +177,13 @@ var _ = Describe("OutboundProxyGenerator", func() {
 			// then
 			Expect(err).ToNot(HaveOccurred())
 
+			// when
+			resp, err := model.ResourceList(rs).ToDeltaDiscoveryResponse()
 			// then
-			resp := generator.ResourceList(rs).ToDeltaDiscoveryResponse()
+			Expect(err).ToNot(HaveOccurred())
+			// when
 			actual, err := util_proto.ToYAML(resp)
+			// then
 			Expect(err).ToNot(HaveOccurred())
 
 			expected, err := ioutil.ReadFile(filepath.Join("testdata", "outbound-proxy", given.expected))
@@ -138,77 +204,129 @@ var _ = Describe("OutboundProxyGenerator", func() {
 `,
 			expected: "02.envoy.golden.yaml",
 		}),
-		Entry("03. transparent_proxying=false, mtls=false, outbound=1", testCase{
+		Entry("03. transparent_proxying=false, mtls=false, outbound=4", testCase{
 			ctx: plainCtx,
 			dataplane: `
             networking:
+              address: 10.0.0.1
+              gateway:
+                tags:
+                  service: gateway
               outbound:
-              - interface: :18080
+              - port: 18080
                 service: backend
+              - port: 54321
+                service: db
+              - port: 40001
+                service: api-http
+              - port: 40002
+                service: api-tcp
 `,
 			expected: "03.envoy.golden.yaml",
 		}),
-		Entry("04. transparent_proxying=true, mtls=false, outbound=1", testCase{
+		Entry("4. transparent_proxying=true, mtls=true, outbound=4", testCase{
 			ctx: mtlsCtx,
 			dataplane: `
             networking:
+              address: 10.0.0.1
+              inbound:
+              - port: 8080
+                tags:
+                  service: web
               outbound:
-              - interface: :18080
+              - port: 18080
                 service: backend
+              - port: 54321
+                service: db
+              - port: 40001
+                service: api-http
+              - port: 40002
+                service: api-tcp
               transparentProxying:
                 redirectPort: 15001
 `,
 			expected: "04.envoy.golden.yaml",
 		}),
-		Entry("05. transparent_proxying=false, mtls=true, outbound=1", testCase{
-			ctx: plainCtx,
-			dataplane: `
-            networking:
-              outbound:
-              - interface: :18080
-                service: backend
-`,
-			expected: "05.envoy.golden.yaml",
-		}),
-		Entry("06. transparent_proxying=true, mtls=true, outbound=1", testCase{
-			ctx: mtlsCtx,
-			dataplane: `
-            networking:
-              outbound:
-              - interface: :18080
-                service: backend
-              transparentProxying:
-                redirectPort: 15001
-`,
-			expected: "06.envoy.golden.yaml",
-		}),
-		Entry("07. transparent_proxying=false, mtls=false, outbound=2", testCase{
-			ctx: plainCtx,
-			dataplane: `
-            networking:
-              outbound:
-              - interface: :18080
-                service: backend
-              - interface: :54321
-                service: db
-`,
-			expected: "07.envoy.golden.yaml",
-		}),
-		Entry("08. transparent_proxying=true, mtls=true, outbound=2", testCase{
-			ctx: mtlsCtx,
-			dataplane: `
-            networking:
-              outbound:
-              - interface: :18080
-                service: backend
-              - interface: :54321
-                service: db
-              transparentProxying:
-                redirectPort: 15001
-`,
-			expected: "08.envoy.golden.yaml",
-		}),
 	)
+
+	It("Add sanitized alternative cluster name for stats", func() {
+		// setup
+		gen := &generator.OutboundProxyGenerator{}
+		dp := `
+        networking:
+          outbound:
+          - port: 18080
+            service: backend.kuma-system
+          - port: 54321
+            service: db.kuma-system`
+
+		dataplane := mesh_proto.Dataplane{}
+		Expect(util_proto.FromYAML([]byte(dp), &dataplane)).To(Succeed())
+
+		proxy := &model.Proxy{
+			Id: model.ProxyId{Name: "side-car", Mesh: "default"},
+			Dataplane: &mesh_core.DataplaneResource{
+				Meta: &test_model.ResourceMeta{
+					Version: "1",
+				},
+				Spec: dataplane,
+			},
+			TrafficRoutes: model.RouteMap{
+				"backend.kuma-system": &mesh_core.TrafficRouteResource{
+					Spec: mesh_proto.TrafficRoute{
+						Conf: []*mesh_proto.TrafficRoute_WeightedDestination{{
+							Weight:      100,
+							Destination: mesh_proto.MatchService("backend.kuma-system"),
+						}},
+					},
+				},
+				"db.kuma-system": &mesh_core.TrafficRouteResource{
+					Spec: mesh_proto.TrafficRoute{
+						Conf: []*mesh_proto.TrafficRoute_WeightedDestination{{
+							Weight:      100,
+							Destination: mesh_proto.TagSelector{"service": "db", "version": "3.2.0"},
+						},
+						}},
+				},
+			},
+			OutboundSelectors: model.DestinationMap{
+				"backend.kuma-system": model.TagSelectorSet{
+					{"service": "backend.kuma-system"},
+				},
+				"db.kuma-system": model.TagSelectorSet{
+					{"service": "db", "version": "3.2.0"},
+				},
+			},
+			OutboundTargets: model.EndpointMap{
+				"backend.kuma-system": []model.Endpoint{
+					{Target: "192.168.0.1", Port: 8082},
+				},
+				"db.kuma-system": []model.Endpoint{
+					{Target: "192.168.0.2", Port: 5432, Tags: map[string]string{"service": "db", "role": "master"}},
+				},
+			},
+			Metadata: &model.DataplaneMetadata{},
+		}
+
+		// when
+		rs, err := gen.Generate(plainCtx, proxy)
+
+		// then
+		Expect(err).ToNot(HaveOccurred())
+
+		// when
+		resp, err := model.ResourceList(rs).ToDeltaDiscoveryResponse()
+		// then
+		Expect(err).ToNot(HaveOccurred())
+		// when
+		actual, err := util_proto.ToYAML(resp)
+		// then
+		Expect(err).ToNot(HaveOccurred())
+
+		expected, err := ioutil.ReadFile(filepath.Join("testdata", "outbound-proxy", "cluster-dots.envoy.golden.yaml"))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(actual).To(MatchYAML(expected))
+	})
 
 	Describe("fail when a user-defined configuration (Dataplane, TrafficRoute, etc) is not valid", func() {
 
@@ -230,7 +348,7 @@ var _ = Describe("OutboundProxyGenerator", func() {
 				Expect(util_proto.FromYAML([]byte(given.dataplane), &dataplane)).To(Succeed())
 
 				proxy := &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default", Mesh: "default"},
+					Id: model.ProxyId{Name: "side-car", Mesh: "default"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "1",
@@ -280,7 +398,6 @@ var _ = Describe("OutboundProxyGenerator", func() {
 							{Target: "192.168.0.3", Port: 5432, Tags: map[string]string{"service": "db", "role": "master"}},
 						},
 					},
-					Logs:     logs.NewMatchedLogs(),
 					Metadata: &model.DataplaneMetadata{},
 				}
 
@@ -306,14 +423,14 @@ var _ = Describe("OutboundProxyGenerator", func() {
                     service: backend
 `,
 				chaos:              noExtraChaos,
-				expectedErrMatcher: HavePrefix(`dataplane.networking.outbound[0].interface: value is not valid: "127:not-a-port"`),
+				expectedErrMatcher: HavePrefix(`invalid DATAPLANE_IP in "127:not-a-port": "127" is not a valid IP address`),
 			}),
 			Entry("dataplane with an outbound interface that has no route", testCase{
 				ctx: plainCtx,
 				dataplane: `
                 networking:
                   outbound:
-                  - interface: :18080
+                  - port: 18080
                     service: backend
 `,
 				chaos: func(proxy *model.Proxy) {
@@ -327,7 +444,7 @@ var _ = Describe("OutboundProxyGenerator", func() {
 				dataplane: `
                 networking:
                   outbound:
-                  - interface: :18080
+                  - port: 18080
                     service: backend
 `,
 				chaos: func(proxy *model.Proxy) {

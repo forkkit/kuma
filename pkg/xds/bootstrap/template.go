@@ -13,6 +13,7 @@ type configParameters struct {
 	XdsConnectTimeout  time.Duration
 	AccessLogPipe      string
 	DataplaneTokenPath string
+	CertBytes          string
 }
 
 const configTemplate string = `
@@ -22,7 +23,10 @@ node:
   metadata:
 {{if .DataplaneTokenPath}}
     dataplaneTokenPath: {{.DataplaneTokenPath}}
-{{end}}    
+{{end}}
+{{if .AdminPort }}
+    dataplane.admin.port: "{{ .AdminPort }}"
+{{ end }}
 
 {{if .AdminPort }}
 admin:
@@ -33,6 +37,17 @@ admin:
       address: {{ .AdminAddress }}
       port_value: {{ .AdminPort }}
 {{ end }}
+
+stats_config:
+  stats_tags:
+  - tag_name: name
+    regex: '^grpc\.((.+)\.)'
+  - tag_name: status
+    regex: '^grpc.*streams_closed(_([0-9]+))'
+  - tag_name: worker
+    regex: '(worker_([0-9]+)\.)'
+  - tag_name: listener
+    regex: '((.+?)\.)rbac\.'
 
 dynamic_resources:
   lds_config: {ads: {}}
@@ -63,6 +78,19 @@ static_resources:
               socket_address:
                 address: {{ .XdsHost }}
                 port_value: {{ .XdsPort }}
+{{ if .CertBytes }}
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.api.v2.auth.UpstreamTlsContext
+        sni: {{ .XdsHost }}
+        common_tls_context:
+          tls_params:
+            tls_minimum_protocol_version: TLSv1_2
+          validation_context:
+            trusted_ca:
+              inline_bytes: "{{ .CertBytes }}"
+{{ end }}
   - name: access_log_sink
     connect_timeout: {{ .XdsConnectTimeout }}
     type: STATIC

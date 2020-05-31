@@ -8,16 +8,17 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/Kong/kuma/pkg/api-server/types"
+	"github.com/pkg/errors"
+
 	config_proto "github.com/Kong/kuma/pkg/config/app/kumactl/v1alpha1"
 	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
+	"github.com/Kong/kuma/pkg/core/rest/errors/types"
 	"github.com/Kong/kuma/pkg/plugins/resources/remote"
 	kuma_http "github.com/Kong/kuma/pkg/util/http"
-	"github.com/pkg/errors"
 )
 
 type DataplaneOverviewClient interface {
-	List(ctx context.Context, meshName string, tags map[string]string) (*mesh.DataplaneOverviewResourceList, error)
+	List(ctx context.Context, meshName string, tags map[string]string, gateway bool) (*mesh.DataplaneOverviewResourceList, error)
 }
 
 func NewDataplaneOverviewClient(coordinates *config_proto.ControlPlaneCoordinates_ApiServer) (DataplaneOverviewClient, error) {
@@ -34,8 +35,8 @@ type httpDataplaneOverviewClient struct {
 	Client kuma_http.Client
 }
 
-func (d *httpDataplaneOverviewClient) List(ctx context.Context, meshName string, tags map[string]string) (*mesh.DataplaneOverviewResourceList, error) {
-	resUrl, err := constructUrl(meshName, tags)
+func (d *httpDataplaneOverviewClient) List(ctx context.Context, meshName string, tags map[string]string, gateway bool) (*mesh.DataplaneOverviewResourceList, error) {
+	resUrl, err := constructUrl(meshName, tags, gateway)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not construct the url")
 	}
@@ -57,12 +58,15 @@ func (d *httpDataplaneOverviewClient) List(ctx context.Context, meshName string,
 	return &overviews, nil
 }
 
-func constructUrl(meshName string, tags map[string]string) (*url.URL, error) {
+func constructUrl(meshName string, tags map[string]string, gateway bool) (*url.URL, error) {
 	result, err := url.Parse(fmt.Sprintf("/meshes/%s/dataplanes+insights", meshName))
 	if err != nil {
 		return nil, err
 	}
 	query := result.Query()
+	if gateway {
+		query.Add("gateway", fmt.Sprintf("%t", gateway))
+	}
 	for tag, value := range tags {
 		query.Add("tag", fmt.Sprintf("%s:%s", tag, value))
 	}

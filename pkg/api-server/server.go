@@ -1,18 +1,23 @@
 package api_server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"github.com/pkg/errors"
+	"io"
 	"net/http"
+
+	"github.com/emicklei/go-restful"
+	"github.com/pkg/errors"
 
 	"github.com/Kong/kuma/pkg/api-server/definitions"
 	"github.com/Kong/kuma/pkg/config"
 	api_server_config "github.com/Kong/kuma/pkg/config/api-server"
 	"github.com/Kong/kuma/pkg/core"
+	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	"github.com/Kong/kuma/pkg/core/resources/manager"
 	"github.com/Kong/kuma/pkg/core/runtime"
-	"github.com/emicklei/go-restful"
 )
 
 var (
@@ -25,6 +30,24 @@ type ApiServer struct {
 
 func (a *ApiServer) Address() string {
 	return a.server.Addr
+}
+
+func init() {
+	// turn off escape & character so the link in "next" fields for resources is user friendly
+	restful.NewEncoder = func(w io.Writer) *json.Encoder {
+		encoder := json.NewEncoder(w)
+		encoder.SetEscapeHTML(false)
+		return encoder
+	}
+	restful.MarshalIndent = func(v interface{}, prefix, indent string) ([]byte, error) {
+		var buf bytes.Buffer
+		encoder := restful.NewEncoder(&buf)
+		encoder.SetIndent(prefix, indent)
+		if err := encoder.Encode(v); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
 }
 
 func NewApiServer(resManager manager.ResourceManager, defs []definitions.ResourceWsDefinition, serverConfig *api_server_config.ApiServerConfig, cfg config.Config) (*ApiServer, error) {
@@ -40,15 +63,21 @@ func NewApiServer(resManager manager.ResourceManager, defs []definitions.Resourc
 		Container:      container,
 	}
 
+	// We create a WebService and set up resources endpoints and index endpoint instead of creating WebService
+	// for every resource like /meshes/{mesh}/traffic-permissions, /meshes/{mesh}/traffic-log etc.
+	// because go-restful detects it as a clash (you cannot register 2 WebServices with path /meshes/)
 	ws := new(restful.WebService)
 	ws.
-		Path("/meshes").
+		Path("/").
 		Consumes(restful.MIME_JSON).
 		Produces(restful.MIME_JSON)
 
-	addToWs(ws, defs, resManager, serverConfig)
+	addResourcesEndpoints(ws, defs, resManager, serverConfig)
 	container.Add(ws)
-	container.Add(indexWs())
+
+	if err := addIndexWsEndpoints(ws); err != nil {
+		return nil, errors.Wrap(err, "could not create index webservice")
+	}
 	container.Add(catalogWs(*serverConfig.Catalog))
 	configWs, err := configWs(cfg)
 	if err != nil {
@@ -62,19 +91,50 @@ func NewApiServer(resManager manager.ResourceManager, defs []definitions.Resourc
 	}, nil
 }
 
-func addToWs(ws *restful.WebService, defs []definitions.ResourceWsDefinition, resManager manager.ResourceManager, config *api_server_config.ApiServerConfig) {
-	overviewWs := overviewWs{
+func addResourcesEndpoints(ws *restful.WebService, defs []definitions.ResourceWsDefinition, resManager manager.ResourceManager, config *api_server_config.ApiServerConfig) {
+	endpoints := dataplaneOverviewEndpoints{
+		publicURL:  config.Catalog.ApiServer.Url,
 		resManager: resManager,
 	}
-	overviewWs.AddToWs(ws)
+	endpoints.addListEndpoint(ws, "/meshes/{mesh}")
+	endpoints.addFindEndpoint(ws, "/meshes/{mesh}")
+	endpoints.addListEndpoint(ws, "") // listing all resources in all meshes
 
 	for _, definition := range defs {
-		resourceWs := resourceWs{
-			resManager:           resManager,
-			readOnly:             config.ReadOnly,
-			ResourceWsDefinition: definition,
+		if definition.ResourceFactory().GetType() != mesh.MeshType {
+			endpoints := resourceEndpoints{
+				publicURL:            config.Catalog.ApiServer.Url,
+				resManager:           resManager,
+				ResourceWsDefinition: definition,
+				meshFromRequest:      meshFromPathParam("mesh"),
+			}
+			if !config.ReadOnly {
+				endpoints.addCreateOrUpdateEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
+				endpoints.addDeleteEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
+			} else {
+				endpoints.addCreateOrUpdateEndpointReadOnly(ws, "/meshes/{mesh}/"+definition.Path)
+				endpoints.addDeleteEndpointReadOnly(ws, "/meshes/{mesh}/"+definition.Path)
+			}
+			endpoints.addFindEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
+			endpoints.addListEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
+			endpoints.addListEndpoint(ws, "/"+definition.Path) // listing all resources in all meshes
+		} else {
+			endpoints := resourceEndpoints{
+				publicURL:            config.Catalog.ApiServer.Url,
+				resManager:           resManager,
+				ResourceWsDefinition: definition,
+				meshFromRequest:      meshFromPathParam("name"),
+			}
+			if !config.ReadOnly {
+				endpoints.addCreateOrUpdateEndpoint(ws, "/meshes")
+				endpoints.addDeleteEndpoint(ws, "/meshes")
+			} else {
+				endpoints.addCreateOrUpdateEndpointReadOnly(ws, "/meshes")
+				endpoints.addDeleteEndpointReadOnly(ws, "/meshes")
+			}
+			endpoints.addFindEndpoint(ws, "/meshes")
+			endpoints.addListEndpoint(ws, "/meshes")
 		}
-		resourceWs.AddToWs(ws)
 	}
 }
 
@@ -92,7 +152,7 @@ func (a *ApiServer) Start(stop <-chan struct{}) error {
 			}
 		}
 	}()
-	log.Info("starting", "port", a.Address())
+	log.Info("starting", "interface", "0.0.0.0", "port", a.Address())
 	select {
 	case <-stop:
 		log.Info("Stopping down API Server")

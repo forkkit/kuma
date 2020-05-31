@@ -1,21 +1,21 @@
 package config
 
 import (
-	"github.com/Kong/kuma/app/kumactl/pkg/config"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
 	kumactl_cmd "github.com/Kong/kuma/app/kumactl/pkg/cmd"
+	"github.com/Kong/kuma/app/kumactl/pkg/config"
 	config_proto "github.com/Kong/kuma/pkg/config/app/kumactl/v1alpha1"
 )
 
 func newConfigControlPlanesAddCmd(pctx *kumactl_cmd.RootContext) *cobra.Command {
 	args := struct {
-		name                     string
-		apiServerURL             string
-		overwrite                bool
-		dataplaneTokenClientCert string
-		dataplaneTokenClientKey  string
+		name            string
+		apiServerURL    string
+		overwrite       bool
+		adminClientCert string
+		adminClientKey  string
 	}{}
 	cmd := &cobra.Command{
 		Use:   "add",
@@ -45,9 +45,9 @@ func newConfigControlPlanesAddCmd(pctx *kumactl_cmd.RootContext) *cobra.Command 
 				Name:         cp.Name,
 				ControlPlane: cp.Name,
 				Credentials: &config_proto.Context_Credentials{
-					DataplaneTokenApi: &config_proto.Context_DataplaneTokenApiCredentials{
-						ClientCert: args.dataplaneTokenClientCert,
-						ClientKey:  args.dataplaneTokenClientKey,
+					AdminApi: &config_proto.Context_AdminApiCredentials{
+						ClientCert: args.adminClientCert,
+						ClientKey:  args.adminClientKey,
 					},
 				},
 			}
@@ -72,7 +72,7 @@ func newConfigControlPlanesAddCmd(pctx *kumactl_cmd.RootContext) *cobra.Command 
 	cmd.Flags().StringVar(&args.apiServerURL, "address", "", "URL of the Control Plane API Server (required)")
 	_ = cmd.MarkFlagRequired("address")
 	cmd.Flags().BoolVar(&args.overwrite, "overwrite", false, "overwrite existing Control Plane with the same reference name")
-	cmd.Flags().StringVar(&args.dataplaneTokenClientCert, "dataplane-token-client-cert", "", "Path to certificate of a client that is authorized to use Dataplane Token Server")
-	cmd.Flags().StringVar(&args.dataplaneTokenClientKey, "dataplane-token-client-key", "", "Path to certificate key of a client that is authorized to use Dataplane Token Server")
+	cmd.Flags().StringVar(&args.adminClientCert, "admin-client-cert", "", "Path to certificate of a client that is authorized to use Admin Server")
+	cmd.Flags().StringVar(&args.adminClientKey, "admin-client-key", "", "Path to certificate key of a client that is authorized to use Admin Server")
 	return cmd
 }

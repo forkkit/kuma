@@ -4,23 +4,24 @@ import (
 	"context"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/golang/protobuf/ptypes/wrappers"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-
-	"github.com/Kong/kuma/pkg/core/resources/store"
-	"github.com/Kong/kuma/pkg/plugins/secrets/k8s"
-
-	core_system "github.com/Kong/kuma/pkg/core/resources/apis/system"
-	secret_model "github.com/Kong/kuma/pkg/core/resources/apis/system"
-	secret_store "github.com/Kong/kuma/pkg/core/secrets/store"
-	"github.com/golang/protobuf/ptypes/wrappers"
-
 	kube_core "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	system_proto "github.com/Kong/kuma/api/system/v1alpha1"
+	core_system "github.com/Kong/kuma/pkg/core/resources/apis/system"
+	secret_model "github.com/Kong/kuma/pkg/core/resources/apis/system"
+	"github.com/Kong/kuma/pkg/core/resources/store"
+	secret_store "github.com/Kong/kuma/pkg/core/secrets/store"
+	"github.com/Kong/kuma/pkg/plugins/secrets/k8s"
 )
 
 var _ = Describe("KubernetesStore", func() {
@@ -75,7 +76,11 @@ var _ = Describe("KubernetesStore", func() {
 	BeforeEach(func() {
 		ns = string(uuid.NewUUID())
 
-		var err error
+		err := k8sClient.Create(context.Background(), &kube_core.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: ns},
+		})
+		Expect(err).ToNot(HaveOccurred())
+
 		s, err = k8s.NewStore(k8sClient, k8sClient, ns)
 		Expect(err).ToNot(HaveOccurred())
 	})
@@ -84,27 +89,31 @@ var _ = Describe("KubernetesStore", func() {
 		It("should create a new secret", func() {
 			// given
 			secret := &secret_model.SecretResource{
-				Spec: wrappers.BytesValue{
-					Value: []byte("example"),
+				Spec: system_proto.Secret{
+					Data: &wrappers.BytesValue{
+						Value: []byte("example"),
+					},
 				},
 			}
 			expected := backend.ParseYAML(`
             apiVersion: v1
             kind: Secret
             type: system.kuma.io/secret
+            metadata:
+              labels:
+                kuma.io/mesh: demo
             data:
               value: ZXhhbXBsZQ== # base64(example)
 `).(*kube_core.Secret)
 
 			// when
-			err := s.Create(context.Background(), secret, store.CreateByKey("ignored", name, noMesh))
+			err := s.Create(context.Background(), secret, store.CreateByKey(name, "demo"))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
 			// and
-			Expect(secret.Meta.GetNamespace()).To(Equal(ns))
 			Expect(secret.Meta.GetName()).To(Equal(name))
-			Expect(secret.Meta.GetMesh()).To(Equal(""))
+			Expect(secret.Meta.GetMesh()).To(Equal("demo"))
 			Expect(secret.Meta.GetVersion()).ToNot(Equal(""))
 
 			// when
@@ -123,16 +132,16 @@ var _ = Describe("KubernetesStore", func() {
 			backend.AssertNotExists(&kube_core.Secret{}, "ignored", name)
 
 			// when
-			err := s.Create(context.Background(), &secret_model.SecretResource{}, store.CreateByKey("ignored", name, noMesh))
+			err := s.Create(context.Background(), &secret_model.SecretResource{}, store.CreateByKey(name, noMesh))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
 
 			// when
-			err = s.Create(context.Background(), &secret_model.SecretResource{}, store.CreateByKey("ignored", name, noMesh))
+			err = s.Create(context.Background(), &secret_model.SecretResource{}, store.CreateByKey(name, noMesh))
 
 			// then
-			Expect(err).To(MatchError(store.ErrorResourceAlreadyExists(core_system.SecretType, ns, name, noMesh)))
+			Expect(err).To(MatchError(store.ErrorResourceAlreadyExists(core_system.SecretType, name, noMesh)))
 		})
 	})
 
@@ -146,6 +155,8 @@ var _ = Describe("KubernetesStore", func() {
             metadata:
               namespace: %s
               name: %s
+              labels:
+                kuma.io/mesh: demo
             data:
               value: ZXhhbXBsZQ== # base64(example)
 `, ns, name))
@@ -163,13 +174,13 @@ var _ = Describe("KubernetesStore", func() {
 			secret := &secret_model.SecretResource{}
 
 			// when
-			err := s.Get(context.Background(), secret, store.GetByKey("ignored", name, noMesh))
+			err := s.Get(context.Background(), secret, store.GetByKey(name, "demo"))
 			// then
 			Expect(err).ToNot(HaveOccurred())
 			version := secret.Meta.GetVersion()
 
 			// when
-			secret.Spec.Value = []byte("another")
+			secret.Spec.Data.Value = []byte("another")
 			err = s.Update(context.Background(), secret)
 
 			// then
@@ -198,6 +209,8 @@ var _ = Describe("KubernetesStore", func() {
             metadata:
               namespace: %s
               name: %s
+              labels:
+                kuma.io/mesh: demo
 `, ns, name))
 			backend.Create(initial)
 
@@ -205,7 +218,7 @@ var _ = Describe("KubernetesStore", func() {
 			secret := &secret_model.SecretResource{}
 
 			// when
-			err := s.Get(context.Background(), secret, store.GetByKey("ignored", name, noMesh))
+			err := s.Get(context.Background(), secret, store.GetByKey(name, "demo"))
 			// then
 			Expect(err).ToNot(HaveOccurred())
 
@@ -215,7 +228,7 @@ var _ = Describe("KubernetesStore", func() {
 			err = s.Update(context.Background(), secret)
 
 			// then
-			Expect(err).To(MatchError(store.ErrorResourceConflict(core_system.SecretType, ns, name, noMesh)))
+			Expect(err).To(MatchError(store.ErrorResourceConflict(core_system.SecretType, name, "demo")))
 		})
 
 		It("should return an error if resource has changed", func() {
@@ -227,6 +240,8 @@ var _ = Describe("KubernetesStore", func() {
             metadata:
               namespace: %s
               name: %s
+              labels:
+                kuma.io/mesh: demo             
 `, ns, name))
 			backend.Create(initial)
 
@@ -234,7 +249,7 @@ var _ = Describe("KubernetesStore", func() {
 			secret1 := &secret_model.SecretResource{}
 
 			// when
-			err := s.Get(context.Background(), secret1, store.GetByKey("ignored", name, noMesh))
+			err := s.Get(context.Background(), secret1, store.GetByKey(name, "demo"))
 			// then
 			Expect(err).ToNot(HaveOccurred())
 
@@ -242,21 +257,29 @@ var _ = Describe("KubernetesStore", func() {
 			secret2 := &secret_model.SecretResource{}
 
 			// when
-			err = s.Get(context.Background(), secret2, store.GetByKey("ignored", name, noMesh))
+			err = s.Get(context.Background(), secret2, store.GetByKey(name, "demo"))
 			// then
 			Expect(err).ToNot(HaveOccurred())
 
 			// when
-			secret1.Spec.Value = []byte("example")
+			secret1.Spec = system_proto.Secret{
+				Data: &wrappers.BytesValue{
+					Value: []byte("example"),
+				},
+			}
 			err = s.Update(context.Background(), secret1)
 			// then
 			Expect(err).ToNot(HaveOccurred())
 
 			// when
-			secret2.Spec.Value = []byte("another")
+			secret2.Spec = system_proto.Secret{
+				Data: &wrappers.BytesValue{
+					Value: []byte("another"),
+				},
+			}
 			err = s.Update(context.Background(), secret2)
 			// then
-			Expect(err).To(MatchError(store.ErrorResourceConflict(core_system.SecretType, ns, name, noMesh)))
+			Expect(err).To(MatchError(store.ErrorResourceConflict(core_system.SecretType, name, "demo")))
 		})
 	})
 
@@ -266,13 +289,44 @@ var _ = Describe("KubernetesStore", func() {
 			backend.AssertNotExists(&kube_core.Secret{}, ns, name)
 
 			// when
-			err := s.Get(context.Background(), &secret_model.SecretResource{}, store.GetByKey("ignored", name, noMesh))
+			err := s.Get(context.Background(), &secret_model.SecretResource{}, store.GetByKey(name, "demo"))
 
 			// then
-			Expect(err).To(MatchError(store.ErrorResourceNotFound(core_system.SecretType, ns, name, noMesh)))
+			Expect(err).To(MatchError(store.ErrorResourceNotFound(core_system.SecretType, name, "demo")))
 		})
 
-		It("should return an existing resource", func() {
+		It("should return an existing resource with explicit mesh label", func() {
+			// setup
+			expected := backend.ParseYAML(fmt.Sprintf(`
+            apiVersion: v1
+            kind: Secret
+            type: system.kuma.io/secret
+            metadata:
+              namespace: %s
+              name: %s
+              labels:
+                kuma.io/mesh: demo
+            data:
+              value: ZXhhbXBsZQ== # base64(example)
+`, ns, name))
+			backend.Create(expected)
+
+			// given
+			actual := &secret_model.SecretResource{}
+
+			// when
+			err := s.Get(context.Background(), actual, store.GetByKey(name, "demo"))
+
+			// then
+			Expect(err).ToNot(HaveOccurred())
+			// and
+			Expect(actual.Meta.GetName()).To(Equal(name))
+			Expect(actual.Meta.GetMesh()).To(Equal("demo"))
+			// and
+			Expect(actual.Spec.Data.Value).To(Equal([]byte("example")))
+		})
+
+		It("should return an existing resource with implicit default mesh", func() {
 			// setup
 			expected := backend.ParseYAML(fmt.Sprintf(`
             apiVersion: v1
@@ -290,15 +344,42 @@ var _ = Describe("KubernetesStore", func() {
 			actual := &secret_model.SecretResource{}
 
 			// when
-			err := s.Get(context.Background(), actual, store.GetByKey("ignored", name, noMesh))
+			err := s.Get(context.Background(), actual, store.GetByKey(name, "default"))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
 			// and
-			Expect(actual.Meta.GetNamespace()).To(Equal(ns))
 			Expect(actual.Meta.GetName()).To(Equal(name))
+			Expect(actual.Meta.GetMesh()).To(Equal("default"))
 			// and
-			Expect(actual.Spec.Value).To(Equal([]byte("example")))
+			Expect(actual.Spec.Data.Value).To(Equal([]byte("example")))
+		})
+
+		It("should return an error if resource is in another mesh", func() {
+			// setup
+			expected := backend.ParseYAML(fmt.Sprintf(`
+            apiVersion: v1
+            kind: Secret
+            type: system.kuma.io/secret
+            metadata:
+              namespace: %s
+              name: %s
+              labels:
+                kuma.io/mesh: demo
+            data:
+              value: ZXhhbXBsZQ== # base64(example)
+`, ns, name))
+			backend.Create(expected)
+
+			// given
+			actual := &secret_model.SecretResource{}
+
+			// when
+			err := s.Get(context.Background(), actual, store.GetByKey(name, "another-mesh"))
+
+			// then
+			Expect(err).To(MatchError(store.ErrorResourceNotFound(core_system.SecretType, name, "another-mesh")))
+			Expect(actual.Spec.GetData().GetValue()).To(BeEmpty())
 		})
 	})
 
@@ -308,7 +389,7 @@ var _ = Describe("KubernetesStore", func() {
 			backend.AssertNotExists(&kube_core.Secret{}, ns, name)
 
 			// when
-			err := s.Delete(context.Background(), &secret_model.SecretResource{}, store.DeleteByKey("ignored", name, noMesh))
+			err := s.Delete(context.Background(), &secret_model.SecretResource{}, store.DeleteByKey(name, "demo"))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -323,11 +404,13 @@ var _ = Describe("KubernetesStore", func() {
             metadata:
               namespace: %s
               name: %s
+              labels:
+                kuma.io/mesh: demo
 `, ns, name))
 			backend.Create(initial)
 
 			// when
-			err := s.Delete(context.Background(), &secret_model.SecretResource{}, store.DeleteByKey("ignored", name, noMesh))
+			err := s.Delete(context.Background(), &secret_model.SecretResource{}, store.DeleteByKey(name, "demo"))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -342,7 +425,7 @@ var _ = Describe("KubernetesStore", func() {
 			secrets := &secret_model.SecretResourceList{}
 
 			// when
-			err := s.List(context.Background(), secrets, store.ListByNamespace("ignored"), store.ListByMesh("ignored"))
+			err := s.List(context.Background(), secrets, store.ListByMesh("ignored"))
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -350,54 +433,88 @@ var _ = Describe("KubernetesStore", func() {
 			Expect(secrets.Items).To(HaveLen(0))
 		})
 
-		It("should return a list of matching resource", func() {
-			// setup
-			one := backend.ParseYAML(fmt.Sprintf(`
-            apiVersion: v1
-            kind: Secret
-            type: system.kuma.io/secret
-            metadata:
-              namespace: %s
-              name: %s
-            data:
-              value: ZXhhbXBsZQ== # base64(example)
+		Describe("with resources loaded", func() {
+			BeforeEach(func() {
+				// given secret in demo mesh
+				one := backend.ParseYAML(fmt.Sprintf(`
+                apiVersion: v1
+                kind: Secret
+                type: system.kuma.io/secret
+                metadata:
+                  namespace: %s
+                  name: %s
+                  labels:
+                    kuma.io/mesh: demo
+                data:
+                  value: ZXhhbXBsZQ== # base64(example)
 `, ns, "one"))
-			backend.Create(one)
-			// and
-			two := backend.ParseYAML(fmt.Sprintf(`
-            apiVersion: v1
-            kind: Secret
-            type: system.kuma.io/secret
-            metadata:
-              namespace: %s
-              name: %s
-            data:
-              value: YW5vdGhlcg== # base64(another)
+				backend.Create(one)
+				// and secret in default mesh
+				two := backend.ParseYAML(fmt.Sprintf(`
+                apiVersion: v1
+                kind: Secret
+                type: system.kuma.io/secret
+                metadata:
+                  namespace: %s
+                  name: %s
+                  labels:
+                    kuma.io/mesh: default
+                data:
+                  value: YW5vdGhlcg== # base64(another)
 `, ns, "two"))
-			backend.Create(two)
+				backend.Create(two)
+				// and secret which is not a Kuma secret but resides in the kuma-system namespace - this should be ignored
+				three := backend.ParseYAML(fmt.Sprintf(`
+                apiVersion: v1
+                kind: Secret
+                type: some-other-type
+                metadata:
+                  namespace: %s
+                  name: %s
+                  labels:
+                    kuma.io/mesh: default
+                data:
+                  value: YW5vdGhlcg== # base64(another)
+`, ns, "three"))
+				backend.Create(three)
+			})
 
-			// given
-			secrets := &secret_model.SecretResourceList{}
+			It("should return a list of secrets in all meshes", func() {
+				// given
+				secrets := &secret_model.SecretResourceList{}
 
-			// when
-			err := s.List(context.Background(), secrets, store.ListByNamespace("ignored"))
+				// when
+				err := s.List(context.Background(), secrets)
 
-			// then
-			Expect(err).ToNot(HaveOccurred())
-			// and
-			Expect(secrets.Items).To(HaveLen(2))
+				// then
+				Expect(err).ToNot(HaveOccurred())
+				// and
+				Expect(secrets.Items).To(HaveLen(2))
 
-			// when
-			items := map[string]*secret_model.SecretResource{
-				secrets.Items[0].Meta.GetName(): secrets.Items[0],
-				secrets.Items[1].Meta.GetName(): secrets.Items[1],
-			}
-			// then
-			Expect(items["one"].Meta.GetNamespace()).To(Equal(ns))
-			Expect(items["one"].Spec.Value).To(Equal([]byte("example")))
-			// and
-			Expect(items["two"].Meta.GetNamespace()).To(Equal(ns))
-			Expect(items["two"].Spec.Value).To(Equal([]byte("another")))
+				// when
+				items := map[string]*secret_model.SecretResource{
+					secrets.Items[0].Meta.GetName(): secrets.Items[0],
+					secrets.Items[1].Meta.GetName(): secrets.Items[1],
+				}
+				// then
+				Expect(items["one"].Spec.Data.Value).To(Equal([]byte("example")))
+				// and
+				Expect(items["two"].Spec.Data.Value).To(Equal([]byte("another")))
+			})
+
+			It("should return a list of secrets in given mesh", func() {
+				// given
+				secrets := &secret_model.SecretResourceList{}
+
+				// when
+				err := s.List(context.Background(), secrets, store.ListByMesh("default"))
+
+				// then
+				Expect(err).ToNot(HaveOccurred())
+				Expect(secrets.Items).To(HaveLen(1))
+				Expect(secrets.Items[0].Spec.Data.Value).To(Equal([]byte("another")))
+			})
 		})
+
 	})
 })

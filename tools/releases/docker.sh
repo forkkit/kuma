@@ -3,7 +3,7 @@
 set -e
 
 [ -z "$KUMA_DOCKER_REPO" ] && KUMA_DOCKER_REPO="kong-docker-kuma-docker.bintray.io"
-KUMA_COMPONENTS=("kuma-cp" "kuma-dp" "kuma-injector" "kuma-tcp-echo" "kumactl")
+KUMA_COMPONENTS=("kuma-cp" "kuma-dp" "kumactl" "kuma-init" "kuma-prometheus-sd")
 
 function msg_green {
   builtin echo -en "\033[1;32m"
@@ -64,9 +64,13 @@ function push {
   docker_login
 
   for component in "${KUMA_COMPONENTS[@]}"; do
-    msg "Pushing $component..."
+    msg "Pushing $component:$KUMA_VERSION ..."
       docker push $KUMA_DOCKER_REPO/$component:$KUMA_VERSION
-      docker push $KUMA_DOCKER_REPO/$component:latest
+      re='^[0-9]+([.][0-9]+)+([.][0-9]+)$'
+      if [[ $yournumber =~ $re ]] ; then
+        msg "Pushing $component:latest ..."
+        docker push $KUMA_DOCKER_REPO/$component:latest
+      fi
     msg_green "... done!"
   done
 

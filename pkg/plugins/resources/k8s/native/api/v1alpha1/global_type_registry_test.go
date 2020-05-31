@@ -49,6 +49,11 @@ var _ = Describe("global TypeRegistry", func() {
 				expectedType: &DataplaneInsight{},
 				expectedKind: "DataplaneInsight",
 			}),
+			Entry("HealthCheck", testCase{
+				inputType:    &mesh_proto.HealthCheck{},
+				expectedType: &HealthCheck{},
+				expectedKind: "HealthCheck",
+			}),
 			Entry("ProxyTemplate", testCase{
 				inputType:    &mesh_proto.ProxyTemplate{},
 				expectedType: &ProxyTemplate{},
@@ -68,6 +73,16 @@ var _ = Describe("global TypeRegistry", func() {
 				inputType:    &mesh_proto.TrafficRoute{},
 				expectedType: &TrafficRoute{},
 				expectedKind: "TrafficRoute",
+			}),
+			Entry("TrafficTrace", testCase{
+				inputType:    &mesh_proto.TrafficTrace{},
+				expectedType: &TrafficTrace{},
+				expectedKind: "TrafficTrace",
+			}),
+			Entry("FaultInjection", testCase{
+				inputType:    &mesh_proto.FaultInjection{},
+				expectedType: &FaultInjection{},
+				expectedKind: "FaultInjection",
 			}),
 		)
 	})
@@ -106,6 +121,11 @@ var _ = Describe("global TypeRegistry", func() {
 				expectedType: &DataplaneInsightList{},
 				expectedKind: "DataplaneInsightList",
 			}),
+			Entry("HealthCheckList", testCase{
+				inputType:    &mesh_proto.HealthCheck{},
+				expectedType: &HealthCheckList{},
+				expectedKind: "HealthCheckList",
+			}),
 			Entry("ProxyTemplateList", testCase{
 				inputType:    &mesh_proto.ProxyTemplate{},
 				expectedType: &ProxyTemplateList{},
@@ -125,6 +145,11 @@ var _ = Describe("global TypeRegistry", func() {
 				inputType:    &mesh_proto.TrafficRoute{},
 				expectedType: &TrafficRouteList{},
 				expectedKind: "TrafficRouteList",
+			}),
+			Entry("TrafficTraceList", testCase{
+				inputType:    &mesh_proto.TrafficTrace{},
+				expectedType: &TrafficTraceList{},
+				expectedKind: "TrafficTraceList",
 			}),
 		)
 	})

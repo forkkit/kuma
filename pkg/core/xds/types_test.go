@@ -1,13 +1,13 @@
 package xds_test
 
 import (
+	envoy_core "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
 
 	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	core_xds "github.com/Kong/kuma/pkg/core/xds"
-	envoy_core "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 )
 
 var _ = Describe("xDS", func() {
@@ -32,18 +32,18 @@ var _ = Describe("xDS", func() {
 				},
 				Entry("mesh and name without namespace", testCase{
 					node: &envoy_core.Node{
-						Id: "pilot.example",
+						Id: "demo.example",
 					},
 					expected: core_xds.ProxyId{
-						Mesh: "pilot", Namespace: "default", Name: "example",
+						Mesh: "demo", Name: "example",
 					},
 				}),
 				Entry("name with namespace and mesh", testCase{
 					node: &envoy_core.Node{
-						Id: "pilot.example.demo",
+						Id: "demo.example.sample",
 					},
 					expected: core_xds.ProxyId{
-						Mesh: "pilot", Namespace: "demo", Name: "example",
+						Mesh: "demo", Name: "example.sample",
 					},
 				}),
 			)
@@ -75,21 +75,15 @@ var _ = Describe("xDS", func() {
 				}),
 				Entry("mesh without name and namespace", testCase{
 					node: &envoy_core.Node{
-						Id: "pilot",
+						Id: "demo",
 					},
 					expectedErr: "the name should be provided after the dot",
 				}),
 				Entry("mesh with empty name", testCase{
 					node: &envoy_core.Node{
-						Id: "pilot.",
+						Id: "demo.",
 					},
 					expectedErr: "name must not be empty",
-				}),
-				Entry("mesh with empty namespace", testCase{
-					node: &envoy_core.Node{
-						Id: "pilot.default.",
-					},
-					expectedErr: "namespace must not be empty",
 				}),
 			)
 		})
@@ -99,16 +93,14 @@ var _ = Describe("xDS", func() {
 		It("should convert proxy ID to resource key", func() {
 			// given
 			id := core_xds.ProxyId{
-				Mesh:      "default",
-				Namespace: "pilot",
-				Name:      "demo",
+				Mesh: "default",
+				Name: "demo",
 			}
 
 			// when
 			key := id.ToResourceKey()
 
 			// then
-			Expect(key.Namespace).To(Equal("pilot"))
 			Expect(key.Mesh).To(Equal("default"))
 			Expect(key.Name).To(Equal("demo"))
 		})

@@ -10,12 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	kuma_cp "github.com/Kong/kuma/pkg/config/app/kuma-cp"
 	"github.com/Kong/kuma/pkg/core"
 	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	core_runtime "github.com/Kong/kuma/pkg/core/runtime"
 	kuma_version "github.com/Kong/kuma/pkg/version"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -41,7 +42,7 @@ type reportsBuffer struct {
 
 func fetchDataplanes(rt core_runtime.Runtime) (*mesh.DataplaneResourceList, error) {
 	dataplanes := mesh.DataplaneResourceList{}
-	if err := rt.ResourceManager().List(context.Background(), &dataplanes); err != nil {
+	if err := rt.ReadOnlyResourceManager().List(context.Background(), &dataplanes); err != nil {
 		return nil, errors.Wrap(err, "Could not fetch dataplanes")
 	}
 
@@ -50,7 +51,7 @@ func fetchDataplanes(rt core_runtime.Runtime) (*mesh.DataplaneResourceList, erro
 
 func fetchMeshes(rt core_runtime.Runtime) (*mesh.MeshResourceList, error) {
 	meshes := mesh.MeshResourceList{}
-	if err := rt.ResourceManager().List(context.Background(), &meshes); err != nil {
+	if err := rt.ReadOnlyResourceManager().List(context.Background(), &meshes); err != nil {
 		return nil, errors.Wrap(err, "Could not fetch meshes")
 	}
 
@@ -100,10 +101,11 @@ func (b *reportsBuffer) updateEntitiesReport(rt core_runtime.Runtime) error {
 	return nil
 }
 
-func (b *reportsBuffer) dispatch(rt core_runtime.Runtime, host string, port int) error {
+func (b *reportsBuffer) dispatch(rt core_runtime.Runtime, host string, port int, pingType string) error {
 	if err := b.updateEntitiesReport(rt); err != nil {
 		return err
 	}
+	b.mutable["signal"] = pingType
 	pingData, err := b.marshall()
 	if err != nil {
 		return err
@@ -134,7 +136,6 @@ func (b *reportsBuffer) Append(info map[string]string) {
 
 func (b *reportsBuffer) initImmutable(rt core_runtime.Runtime) {
 	b.immutable["version"] = kuma_version.Build.Version
-	b.immutable["signal"] = "ping"
 	b.immutable["unique_id"] = rt.GetInstanceId()
 	b.immutable["backend"] = rt.Config().Store.Type
 
@@ -146,8 +147,12 @@ func (b *reportsBuffer) initImmutable(rt core_runtime.Runtime) {
 
 func startReportTicker(rt core_runtime.Runtime, buffer *reportsBuffer) {
 	go func() {
+		err := buffer.dispatch(rt, pingHost, pingPort, "start")
+		if err != nil {
+			log.V(2).Info("Failed sending usage info", err)
+		}
 		for range time.Tick(time.Second * pingInterval) {
-			err := buffer.dispatch(rt, pingHost, pingPort)
+			err := buffer.dispatch(rt, pingHost, pingPort, "ping")
 			if err != nil {
 				log.V(2).Info("Failed sending usage info", err)
 			}

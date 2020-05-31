@@ -33,6 +33,9 @@ var (
 	_ = ptypes.DynamicAny{}
 )
 
+// define the regex for a UUID once up-front
+var _dataplane_uuidPattern = regexp.MustCompile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
 // Validate checks the field values on Dataplane with the rules defined in the
 // proto definition for this message. If any rules are violated, an error is returned.
 func (m *Dataplane) Validate() error {
@@ -44,6 +47,16 @@ func (m *Dataplane) Validate() error {
 		if err := v.Validate(); err != nil {
 			return DataplaneValidationError{
 				field:  "Networking",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if v, ok := interface{}(m.GetMetrics()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return DataplaneValidationError{
+				field:  "Metrics",
 				reason: "embedded message failed validation",
 				cause:  err,
 			}
@@ -113,6 +126,18 @@ var _ interface {
 func (m *Dataplane_Networking) Validate() error {
 	if m == nil {
 		return nil
+	}
+
+	// no validation rules for Address
+
+	if v, ok := interface{}(m.GetGateway()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return Dataplane_NetworkingValidationError{
+				field:  "Gateway",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
 	}
 
 	for idx, item := range m.GetInbound() {
@@ -222,12 +247,13 @@ func (m *Dataplane_Networking_Inbound) Validate() error {
 		return nil
 	}
 
-	if utf8.RuneCountInString(m.GetInterface()) < 2 {
-		return Dataplane_Networking_InboundValidationError{
-			field:  "Interface",
-			reason: "value length must be at least 2 runes",
-		}
-	}
+	// no validation rules for Interface
+
+	// no validation rules for Port
+
+	// no validation rules for ServicePort
+
+	// no validation rules for Address
 
 	if len(m.GetTags()) < 1 {
 		return Dataplane_Networking_InboundValidationError{
@@ -304,25 +330,17 @@ func (m *Dataplane_Networking_Outbound) Validate() error {
 		return nil
 	}
 
-	if utf8.RuneCountInString(m.GetInterface()) < 2 {
-		return Dataplane_Networking_OutboundValidationError{
-			field:  "Interface",
-			reason: "value length must be at least 2 runes",
-		}
-	}
+	// no validation rules for Interface
+
+	// no validation rules for Address
+
+	// no validation rules for Port
 
 	if err := m._validateHostname(m.GetService()); err != nil {
 		return Dataplane_Networking_OutboundValidationError{
 			field:  "Service",
 			reason: "value must be a valid hostname",
 			cause:  err,
-		}
-	}
-
-	if val := m.GetServicePort(); val < 1 || val > 65535 {
-		return Dataplane_Networking_OutboundValidationError{
-			field:  "ServicePort",
-			reason: "value must be inside range [1, 65535]",
 		}
 	}
 
@@ -415,6 +433,81 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = Dataplane_Networking_OutboundValidationError{}
+
+// Validate checks the field values on Dataplane_Networking_Gateway with the
+// rules defined in the proto definition for this message. If any rules are
+// violated, an error is returned.
+func (m *Dataplane_Networking_Gateway) Validate() error {
+	if m == nil {
+		return nil
+	}
+
+	if len(m.GetTags()) < 1 {
+		return Dataplane_Networking_GatewayValidationError{
+			field:  "Tags",
+			reason: "value must contain at least 1 pair(s)",
+		}
+	}
+
+	return nil
+}
+
+// Dataplane_Networking_GatewayValidationError is the validation error returned
+// by Dataplane_Networking_Gateway.Validate if the designated constraints
+// aren't met.
+type Dataplane_Networking_GatewayValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e Dataplane_Networking_GatewayValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e Dataplane_Networking_GatewayValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e Dataplane_Networking_GatewayValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e Dataplane_Networking_GatewayValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e Dataplane_Networking_GatewayValidationError) ErrorName() string {
+	return "Dataplane_Networking_GatewayValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e Dataplane_Networking_GatewayValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sDataplane_Networking_Gateway.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = Dataplane_Networking_GatewayValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = Dataplane_Networking_GatewayValidationError{}
 
 // Validate checks the field values on Dataplane_Networking_TransparentProxying
 // with the rules defined in the proto definition for this message. If any

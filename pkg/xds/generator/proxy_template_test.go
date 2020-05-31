@@ -4,8 +4,6 @@ import (
 	"io/ioutil"
 	"path/filepath"
 
-	"github.com/Kong/kuma/pkg/core/permissions"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
@@ -19,7 +17,7 @@ import (
 	"github.com/Kong/kuma/pkg/xds/generator"
 )
 
-var _ = Describe("TemplateProxyGenerator", func() {
+var _ = Describe("ProxyTemplateGenerator", func() {
 	Context("Error case", func() {
 		type testCase struct {
 			proxy    *model.Proxy
@@ -30,13 +28,20 @@ var _ = Describe("TemplateProxyGenerator", func() {
 		DescribeTable("Avoid producing invalid Envoy xDS resources",
 			func(given testCase) {
 				// setup
-				gen := &generator.TemplateProxyGenerator{
+				gen := &generator.ProxyTemplateGenerator{
 					ProxyTemplate: given.template,
 				}
 				ctx := xds_context.Context{
 					ControlPlane: &xds_context.ControlPlaneContext{
 						SdsLocation: "kuma-system:5677",
 						SdsTlsCert:  []byte("12345"),
+					},
+					Mesh: xds_context.MeshContext{
+						Resource: &mesh_core.MeshResource{
+							Meta: &test_model.ResourceMeta{
+								Name: "demo",
+							},
+						},
 					},
 				}
 
@@ -50,15 +55,21 @@ var _ = Describe("TemplateProxyGenerator", func() {
 			},
 			Entry("should fail when raw xDS resource is not valid", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "demo.backend-01"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
+							Name:    "backend-01",
+							Mesh:    "demo",
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 								TransparentProxying: &mesh_proto.Dataplane_Networking_TransparentProxying{
 									RedirectPort: 15001,
@@ -66,7 +77,6 @@ var _ = Describe("TemplateProxyGenerator", func() {
 							},
 						},
 					},
-					TrafficPermissions: permissions.MatchedPermissions{},
 				},
 				template: &mesh_proto.ProxyTemplate{
 					Conf: &mesh_proto.ProxyTemplate_Conf{
@@ -100,7 +110,7 @@ var _ = Describe("TemplateProxyGenerator", func() {
 				ptBytes, err := ioutil.ReadFile(filepath.Join("testdata", "template-proxy", given.proxyTemplateFile))
 				Expect(err).ToNot(HaveOccurred())
 				Expect(util_proto.FromYAML(ptBytes, &proxyTemplate)).To(Succeed())
-				gen := &generator.TemplateProxyGenerator{
+				gen := &generator.ProxyTemplateGenerator{
 					ProxyTemplate: &proxyTemplate,
 				}
 
@@ -111,22 +121,38 @@ var _ = Describe("TemplateProxyGenerator", func() {
 						SdsTlsCert:  []byte("12345"),
 					},
 					Mesh: xds_context.MeshContext{
-						TlsEnabled: true,
+						Resource: &mesh_core.MeshResource{
+							Meta: &test_model.ResourceMeta{
+								Name: "demo",
+							},
+							Spec: mesh_proto.Mesh{
+								Mtls: &mesh_proto.Mesh_Mtls{
+									EnabledBackend: "builtin",
+									Backends: []*mesh_proto.CertificateAuthorityBackend{
+										{
+											Name: "builtin",
+											Type: "builtin",
+										},
+									},
+								},
+							},
+						},
 					},
 				}
 
 				dataplane := mesh_proto.Dataplane{}
 				Expect(util_proto.FromYAML([]byte(given.dataplane), &dataplane)).To(Succeed())
 				proxy := &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "demo.backend-01"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
+							Name:    "backend-01",
+							Mesh:    "demo",
 							Version: "1",
 						},
 						Spec: dataplane,
 					},
-					TrafficPermissions: permissions.MatchedPermissions{},
-					Metadata:           &model.DataplaneMetadata{},
+					Metadata: &model.DataplaneMetadata{},
 				}
 
 				// when
@@ -135,9 +161,13 @@ var _ = Describe("TemplateProxyGenerator", func() {
 				// then
 				Expect(err).ToNot(HaveOccurred())
 
+				// when
+				resp, err := model.ResourceList(rs).ToDeltaDiscoveryResponse()
 				// then
-				resp := generator.ResourceList(rs).ToDeltaDiscoveryResponse()
+				Expect(err).ToNot(HaveOccurred())
+				// when
 				actual, err := util_proto.ToYAML(resp)
+				// then
 				Expect(err).ToNot(HaveOccurred())
 
 				expected, err := ioutil.ReadFile(filepath.Join("testdata", "template-proxy", given.envoyConfigFile))
@@ -149,8 +179,10 @@ var _ = Describe("TemplateProxyGenerator", func() {
                 networking:
                   transparentProxying:
                     redirectPort: 15001
+                  address: 192.168.0.1
                   inbound:
-                    - interface: 192.168.0.1:80:8080
+                    - port: 80
+                      servicePort: 8080
 `,
 				proxyTemplateFile: "1-proxy-template.input.yaml",
 				envoyConfigFile:   "1-envoy-config.golden.yaml",

@@ -2,14 +2,17 @@ package logs_test
 
 import (
 	"context"
+
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
+
 	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/core/logs"
 	core_mesh "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	core_manager "github.com/Kong/kuma/pkg/core/resources/manager"
 	"github.com/Kong/kuma/pkg/core/resources/store"
 	"github.com/Kong/kuma/pkg/plugins/resources/memory"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
+	"github.com/Kong/kuma/pkg/util/proto"
 )
 
 var _ = Describe("Matcher", func() {
@@ -29,12 +32,24 @@ var _ = Describe("Matcher", func() {
 		// given mesh with 3 backends and file1 backend as default
 		backendFile1 = &mesh_proto.LoggingBackend{
 			Name: "file1",
+			Type: mesh_proto.LoggingFileType,
+			Conf: proto.MustToStruct(&mesh_proto.FileLoggingBackendConfig{
+				Path: "/tmp/access.logs",
+			}),
 		}
 		backendFile2 = &mesh_proto.LoggingBackend{
 			Name: "file2",
+			Type: mesh_proto.LoggingFileType,
+			Conf: proto.MustToStruct(&mesh_proto.FileLoggingBackendConfig{
+				Path: "/tmp/access.logs",
+			}),
 		}
 		backendFile3 = &mesh_proto.LoggingBackend{
 			Name: "file3",
+			Type: mesh_proto.LoggingFileType,
+			Conf: proto.MustToStruct(&mesh_proto.FileLoggingBackendConfig{
+				Path: "/tmp/access.logs",
+			}),
 		}
 		meshRes := core_mesh.MeshResource{
 			Spec: mesh_proto.Mesh{
@@ -44,22 +59,25 @@ var _ = Describe("Matcher", func() {
 				},
 			},
 		}
-		err := manager.Create(context.Background(), &meshRes, store.CreateByKey("default", "sample", "sample"))
+		err := manager.Create(context.Background(), &meshRes, store.CreateByKey("sample", "sample"))
 		Expect(err).ToNot(HaveOccurred())
 
 		// and
 		dpRes = core_mesh.DataplaneResource{
 			Spec: mesh_proto.Dataplane{
 				Networking: &mesh_proto.Dataplane_Networking{
+					Address: "127.0.0.1",
 					Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
 						{
-							Interface: "127.0.0.1:8080:8081",
+							Port:        8080,
+							ServicePort: 8081,
 							Tags: map[string]string{
 								"service": "kong",
 							},
 						},
 						{
-							Interface: "127.0.0.1:8090:8091",
+							Port:        8090,
+							ServicePort: 8091,
 							Tags: map[string]string{
 								"service": "kong-admin",
 							},
@@ -67,18 +85,18 @@ var _ = Describe("Matcher", func() {
 					},
 					Outbound: []*mesh_proto.Dataplane_Networking_Outbound{
 						{
-							Interface: ":9091",
-							Service:   "backend",
+							Port:    9091,
+							Service: "backend",
 						},
 						{
-							Interface: ":9092",
-							Service:   "web",
+							Port:    9092,
+							Service: "web",
 						},
 					},
 				},
 			},
 		}
-		err = manager.Create(context.Background(), &dpRes, store.CreateByKey("default", "dp-1", "sample"))
+		err = manager.Create(context.Background(), &dpRes, store.CreateByKey("dp-1", "sample"))
 		Expect(err).ToNot(HaveOccurred())
 	})
 
@@ -105,32 +123,7 @@ var _ = Describe("Matcher", func() {
 				},
 			},
 		}
-		err := manager.Create(context.Background(), &logRes1, store.CreateByKey("default", "lr-1", "sample"))
-		Expect(err).ToNot(HaveOccurred())
-
-		// and
-		logRes2 := core_mesh.TrafficLogResource{
-			Spec: mesh_proto.TrafficLog{
-				Sources: []*mesh_proto.Selector{
-					{
-						Match: map[string]string{
-							"service": "kong-admin",
-						},
-					},
-				},
-				Destinations: []*mesh_proto.Selector{
-					{
-						Match: map[string]string{
-							"service": "web",
-						},
-					},
-				},
-				Conf: &mesh_proto.TrafficLog_Conf{
-					Backend: "file3",
-				},
-			},
-		}
-		err = manager.Create(context.Background(), &logRes2, store.CreateByKey("default", "lr-2", "sample"))
+		err := manager.Create(context.Background(), &logRes1, store.CreateByKey("lr-1", "sample"))
 		Expect(err).ToNot(HaveOccurred())
 
 		// and
@@ -152,7 +145,7 @@ var _ = Describe("Matcher", func() {
 				},
 			},
 		}
-		err = manager.Create(context.Background(), &logRes3, store.CreateByKey("default", "lr-3", "sample"))
+		err = manager.Create(context.Background(), &logRes3, store.CreateByKey("lr-3", "sample"))
 		Expect(err).ToNot(HaveOccurred())
 
 		// when
@@ -160,17 +153,12 @@ var _ = Describe("Matcher", func() {
 
 		// then
 		Expect(err).ToNot(HaveOccurred())
-		Expect(log.Outbounds[":9091"]).To(HaveLen(2))
-		// should match because *->* rule with file-1 logging backend as default
-		Expect(log.Outbounds[":9091"]).To(ContainElement(backendFile1))
 		// should match because kong->backend rule
-		Expect(log.Outbounds[":9091"]).To(ContainElement(backendFile2))
-
-		Expect(log.Outbounds[":9092"]).To(HaveLen(2))
-		// should match because *->* rule with file-1 logging backend as default
-		Expect(log.Outbounds[":9092"]).To(ContainElement(backendFile1))
-		// should match because kong-admin->web rule
-		Expect(log.Outbounds[":9092"]).To(ContainElement(backendFile3))
+		Expect(log["backend"]).To(Equal(backendFile2))
+		// should match because *->* rule and default backend file1
+		Expect(log["web"]).To(Equal(backendFile1))
+		// should match implicit pass through because service *->* rule and default backend file1
+		Expect(log[core_mesh.PassThroughService]).To(Equal(backendFile1))
 	})
 
 	It("should not match services", func() {
@@ -196,7 +184,7 @@ var _ = Describe("Matcher", func() {
 				},
 			},
 		}
-		err := manager.Create(context.Background(), &logRes, store.CreateByKey("default", "lr-1", "sample"))
+		err := manager.Create(context.Background(), &logRes, store.CreateByKey("lr-1", "sample"))
 		Expect(err).ToNot(HaveOccurred())
 
 		// when
@@ -204,7 +192,7 @@ var _ = Describe("Matcher", func() {
 
 		// then
 		Expect(err).ToNot(HaveOccurred())
-		Expect(log.Outbounds).To(HaveLen(0))
+		Expect(log).To(HaveLen(0))
 	})
 
 	It("should skip unknown backends", func() {
@@ -230,7 +218,7 @@ var _ = Describe("Matcher", func() {
 				},
 			},
 		}
-		err := manager.Create(context.Background(), &logRes, store.CreateByKey("default", "lr-1", "sample"))
+		err := manager.Create(context.Background(), &logRes, store.CreateByKey("lr-1", "sample"))
 		Expect(err).ToNot(HaveOccurred())
 
 		// when
@@ -238,6 +226,6 @@ var _ = Describe("Matcher", func() {
 
 		// then
 		Expect(err).ToNot(HaveOccurred())
-		Expect(log.Outbounds).To(HaveLen(0))
+		Expect(log).To(HaveLen(0))
 	})
 })

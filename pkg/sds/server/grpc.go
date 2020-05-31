@@ -9,10 +9,11 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	envoy_discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v2"
+	envoy_server "github.com/envoyproxy/go-control-plane/pkg/server/v2"
 
 	sds_config "github.com/Kong/kuma/pkg/config/sds"
 	"github.com/Kong/kuma/pkg/core"
-	core_runtime "github.com/Kong/kuma/pkg/core/runtime"
+	"github.com/Kong/kuma/pkg/core/runtime/component"
 )
 
 const grpcMaxConcurrentStreams = 1000000
@@ -22,13 +23,12 @@ var (
 )
 
 type grpcServer struct {
-	server Server
+	server envoy_server.Server
 	config sds_config.SdsServerConfig
 }
 
-// Make sure that grpcServer implements all relevant interfaces
 var (
-	_ core_runtime.Component = &grpcServer{}
+	_ component.Component = &grpcServer{}
 )
 
 func (s *grpcServer) Start(stop <-chan struct{}) error {
@@ -62,7 +62,7 @@ func (s *grpcServer) Start(stop <-chan struct{}) error {
 			grpcServerLog.Info("terminated normally")
 		}
 	}()
-	grpcServerLog.Info("starting", "port", s.config.GrpcPort, "tls", useTLS)
+	grpcServerLog.Info("starting", "interface", "0.0.0.0", "port", s.config.GrpcPort, "tls", useTLS)
 
 	select {
 	case <-stop:

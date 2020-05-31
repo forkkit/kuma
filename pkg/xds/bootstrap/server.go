@@ -9,7 +9,7 @@ import (
 
 	"github.com/Kong/kuma/pkg/core"
 	"github.com/Kong/kuma/pkg/core/resources/store"
-	core_runtime "github.com/Kong/kuma/pkg/core/runtime"
+	"github.com/Kong/kuma/pkg/core/runtime/component"
 	"github.com/Kong/kuma/pkg/util/proto"
 	"github.com/Kong/kuma/pkg/xds/bootstrap/types"
 )
@@ -21,7 +21,7 @@ type BootstrapServer struct {
 	Generator BootstrapGenerator
 }
 
-var _ core_runtime.Component = &BootstrapServer{}
+var _ component.Component = &BootstrapServer{}
 
 func (b *BootstrapServer) Start(stop <-chan struct{}) error {
 	mux := http.NewServeMux()
@@ -45,7 +45,7 @@ func (b *BootstrapServer) Start(stop <-chan struct{}) error {
 		}
 		log.Info("terminated normally")
 	}()
-	log.Info("starting", "port", b.Port)
+	log.Info("starting", "interface", "0.0.0.0", "port", b.Port)
 
 	select {
 	case <-stop:
@@ -74,6 +74,15 @@ func (b *BootstrapServer) handleBootstrapRequest(resp http.ResponseWriter, req *
 	if err != nil {
 		if store.IsResourceNotFound(err) {
 			resp.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if store.IsResourcePreconditionFailed(err) {
+			resp.WriteHeader(http.StatusUnprocessableEntity)
+			_, err = resp.Write([]byte(err.Error()))
+			if err != nil {
+				log.WithValues("params", reqParams).Error(err, "Error while writing the response")
+				return
+			}
 			return
 		}
 		log.WithValues("params", reqParams).Error(err, "Could not generate a bootstrap configuration")

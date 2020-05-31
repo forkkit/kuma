@@ -3,17 +3,21 @@ package get
 import (
 	"context"
 	"io"
+	"time"
+
+	"github.com/Kong/kuma/app/kumactl/pkg/output/table"
+
+	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
 
 	"github.com/Kong/kuma/app/kumactl/pkg/output"
 	"github.com/Kong/kuma/app/kumactl/pkg/output/printers"
 	mesh_core "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	rest_types "github.com/Kong/kuma/pkg/core/resources/model/rest"
 	core_store "github.com/Kong/kuma/pkg/core/resources/store"
-	"github.com/pkg/errors"
-	"github.com/spf13/cobra"
 )
 
-func newGetTrafficRoutesCmd(pctx *getContext) *cobra.Command {
+func newGetTrafficRoutesCmd(pctx *listContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "traffic-routes",
 		Short: "Show TrafficRoutes",
@@ -25,13 +29,13 @@ func newGetTrafficRoutesCmd(pctx *getContext) *cobra.Command {
 			}
 
 			trafficRoutes := &mesh_core.TrafficRouteResourceList{}
-			if err := rs.List(context.Background(), trafficRoutes, core_store.ListByMesh(pctx.CurrentMesh())); err != nil {
+			if err := rs.List(context.Background(), trafficRoutes, core_store.ListByMesh(pctx.CurrentMesh()), core_store.ListByPage(pctx.args.size, pctx.args.offset)); err != nil {
 				return errors.Wrapf(err, "failed to list TrafficRoutes")
 			}
 
-			switch format := output.Format(pctx.args.outputFormat); format {
+			switch format := output.Format(pctx.getContext.args.outputFormat); format {
 			case output.TableFormat:
-				return PrintTrafficRoutes(trafficRoutes, cmd.OutOrStdout())
+				return printTrafficRoutes(pctx.Now(), trafficRoutes, cmd.OutOrStdout())
 			default:
 				printer, err := printers.NewGenericPrinter(format)
 				if err != nil {
@@ -44,9 +48,9 @@ func newGetTrafficRoutesCmd(pctx *getContext) *cobra.Command {
 	return cmd
 }
 
-func PrintTrafficRoutes(trafficRoutes *mesh_core.TrafficRouteResourceList, out io.Writer) error {
+func printTrafficRoutes(rootTime time.Time, trafficRoutes *mesh_core.TrafficRouteResourceList, out io.Writer) error {
 	data := printers.Table{
-		Headers: []string{"MESH", "NAME"},
+		Headers: []string{"MESH", "NAME", "AGE"},
 		NextRow: func() func() []string {
 			i := 0
 			return func() []string {
@@ -54,14 +58,16 @@ func PrintTrafficRoutes(trafficRoutes *mesh_core.TrafficRouteResourceList, out i
 				if len(trafficRoutes.Items) <= i {
 					return nil
 				}
-				proxyTemplate := trafficRoutes.Items[i]
+				trafficroute := trafficRoutes.Items[i]
 
 				return []string{
-					proxyTemplate.Meta.GetMesh(), // MESH
-					proxyTemplate.Meta.GetName(), // NAME
+					trafficroute.Meta.GetMesh(),                                        // MESH
+					trafficroute.Meta.GetName(),                                        // NAME
+					table.TimeSince(trafficroute.Meta.GetModificationTime(), rootTime), // AGE
 				}
 			}
 		}(),
+		Footer: table.PaginationFooter(trafficRoutes),
 	}
 	return printers.NewTablePrinter().Print(data, out)
 }

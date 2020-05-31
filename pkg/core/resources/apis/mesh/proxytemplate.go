@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"errors"
+
 	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/core/resources/model"
 	"github.com/Kong/kuma/pkg/core/resources/registry"
@@ -43,7 +44,8 @@ func (t *ProxyTemplateResource) SetSpec(spec model.ResourceSpec) error {
 var _ model.ResourceList = &ProxyTemplateResourceList{}
 
 type ProxyTemplateResourceList struct {
-	Items []*ProxyTemplateResource
+	Items      []*ProxyTemplateResource
+	Pagination model.Pagination
 }
 
 func (l *ProxyTemplateResourceList) GetItems() []model.Resource {
@@ -67,8 +69,15 @@ func (l *ProxyTemplateResourceList) AddItem(r model.Resource) error {
 		return model.ErrorInvalidItemType((*ProxyTemplateResource)(nil), r)
 	}
 }
+func (l *ProxyTemplateResourceList) GetPagination() *model.Pagination {
+	return &l.Pagination
+}
 
 func init() {
 	registry.RegisterType(&ProxyTemplateResource{})
 	registry.RegistryListType(&ProxyTemplateResourceList{})
+}
+
+func (t *ProxyTemplateResource) Selectors() []*mesh_proto.Selector {
+	return t.Spec.Selectors
 }

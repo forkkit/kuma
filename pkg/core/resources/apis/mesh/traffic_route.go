@@ -44,7 +44,8 @@ func (t *TrafficRouteResource) SetSpec(spec model.ResourceSpec) error {
 var _ model.ResourceList = &TrafficRouteResourceList{}
 
 type TrafficRouteResourceList struct {
-	Items []*TrafficRouteResource
+	Items      []*TrafficRouteResource
+	Pagination model.Pagination
 }
 
 func (l *TrafficRouteResourceList) GetItems() []model.Resource {
@@ -68,8 +69,19 @@ func (l *TrafficRouteResourceList) AddItem(r model.Resource) error {
 		return model.ErrorInvalidItemType((*TrafficRouteResource)(nil), r)
 	}
 }
+func (l *TrafficRouteResourceList) GetPagination() *model.Pagination {
+	return &l.Pagination
+}
 
 func init() {
 	registry.RegisterType(&TrafficRouteResource{})
 	registry.RegistryListType(&TrafficRouteResourceList{})
+}
+
+func (t *TrafficRouteResource) Sources() []*mesh_proto.Selector {
+	return t.Spec.GetSources()
+}
+
+func (t *TrafficRouteResource) Destinations() []*mesh_proto.Selector {
+	return t.Spec.GetDestinations()
 }

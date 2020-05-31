@@ -1,19 +1,25 @@
 {
+    "total": 2,
     "items": [
       {
         "mesh": "default",
         "name": "experiment",
+        "creationTime": "0001-01-01T00:00:00Z",
+        "modificationTime": "0001-01-01T00:00:00Z",
         "networking": {
+          "address": "127.0.0.1",
           "inbound": [
             {
-              "interface": "127.0.0.1:8080:80",
+              "port": 8080,
+              "servicePort": 80,
               "tags": {
                 "service": "mobile",
                 "version": "v1"
               }
             },
             {
-              "interface": "127.0.0.1:8090:90",
+              "port": 8090,
+              "servicePort": 90,
               "tags": {
                 "service": "metrics",
                 "version": "v1"
@@ -26,10 +32,14 @@
       {
         "mesh": "default",
         "name": "example",
+        "creationTime": "0001-01-01T00:00:00Z",
+        "modificationTime": "0001-01-01T00:00:00Z",
         "networking": {
+          "address": "127.0.0.2",
           "inbound": [
             {
-              "interface": "127.0.0.2:8080:80",
+              "port": 8080,
+              "servicePort": 80,
               "tags": {
                 "service": "web",
                 "version": "v2"
@@ -39,5 +49,6 @@
         },
         "type": "Dataplane"
       }
-    ]
+    ],
+    "next": null
 }

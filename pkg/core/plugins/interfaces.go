@@ -1,7 +1,9 @@
 package plugins
 
 import (
-	core_discovery "github.com/Kong/kuma/pkg/core/discovery"
+	"github.com/pkg/errors"
+
+	core_ca "github.com/Kong/kuma/pkg/core/ca"
 	core_store "github.com/Kong/kuma/pkg/core/resources/store"
 	core_runtime "github.com/Kong/kuma/pkg/core/runtime"
 	secret_store "github.com/Kong/kuma/pkg/core/secrets/store"
@@ -24,10 +26,14 @@ type BootstrapPlugin interface {
 }
 
 // ResourceStorePlugin is responsible for instantiating a particular ResourceStore.
+type DbVersion = uint
 type ResourceStorePlugin interface {
 	Plugin
 	NewResourceStore(PluginContext, PluginConfig) (core_store.ResourceStore, error)
+	Migrate(PluginContext, PluginConfig) (DbVersion, error)
 }
+
+var AlreadyMigrated = errors.New("database already migrated")
 
 // SecretStorePlugin is responsible for instantiating a particular SecretStore.
 type SecretStorePlugin interface {
@@ -35,10 +41,10 @@ type SecretStorePlugin interface {
 	NewSecretStore(PluginContext, PluginConfig) (secret_store.SecretStore, error)
 }
 
-// DiscoveryPlugin is responsible for instantiating a particular DiscoverySource.
+// DiscoveryPlugin is responsible for discovering Dataplanes for given environment.
 type DiscoveryPlugin interface {
 	Plugin
-	NewDiscoverySource(PluginContext, PluginConfig) (core_discovery.DiscoverySource, error)
+	StartDiscovering(PluginContext, PluginConfig) error
 }
 
 // RuntimePlugin is responsible for registering environment-specific components,
@@ -46,4 +52,10 @@ type DiscoveryPlugin interface {
 type RuntimePlugin interface {
 	Plugin
 	Customize(core_runtime.Runtime) error
+}
+
+// CaPlugin is responsible for providing Certificate Authority Manager
+type CaPlugin interface {
+	Plugin
+	NewCaManager(PluginContext, PluginConfig) (core_ca.Manager, error)
 }

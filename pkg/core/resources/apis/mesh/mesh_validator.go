@@ -2,15 +2,24 @@ package mesh
 
 import (
 	"fmt"
+	"net"
+	"net/url"
+	"time"
+
+	structpb "github.com/golang/protobuf/ptypes/struct"
+
 	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/core/validators"
-	"net"
+	"github.com/Kong/kuma/pkg/envoy/accesslog"
+	"github.com/Kong/kuma/pkg/util/proto"
 )
 
 func (m *MeshResource) Validate() error {
 	var verr validators.ValidationError
 	verr.AddError("mtls", validateMtls(m.Spec.Mtls))
 	verr.AddError("logging", validateLogging(m.Spec.Logging))
+	verr.AddError("tracing", validateTracing(m.Spec.Tracing))
+	verr.AddError("metrics", validateMetrics(m.Spec.Metrics))
 	return verr.OrNil()
 }
 
@@ -19,8 +28,23 @@ func validateMtls(mtls *mesh_proto.Mesh_Mtls) validators.ValidationError {
 	if mtls == nil {
 		return verr
 	}
-	if mtls.Enabled && mtls.Ca == nil {
-		verr.AddViolation("ca", "has to be set when mTLS is enabled")
+	usedNames := map[string]bool{}
+	for i, backend := range mtls.GetBackends() {
+		if usedNames[backend.Name] {
+			verr.AddViolationAt(validators.RootedAt("backends").Index(i).Field("name"), fmt.Sprintf("%q name is already used for another backend", backend.Name))
+		}
+		usedNames[backend.Name] = true
+	}
+	if mtls.GetEnabledBackend() != "" && !usedNames[mtls.GetEnabledBackend()] {
+		verr.AddViolation("enabledBackend", "has to be set to one of the backends in the mesh")
+	}
+	for _, backend := range mtls.Backends {
+		if backend.GetDpCert() != nil {
+			_, err := time.ParseDuration(backend.GetDpCert().GetRotation().GetExpiration())
+			if err != nil {
+				verr.AddViolation("dpcert.rotation.expiration", "has to be a valid format")
+			}
+		}
 	}
 	return verr
 }
@@ -32,7 +56,7 @@ func validateLogging(logging *mesh_proto.Logging) validators.ValidationError {
 	}
 	usedNames := map[string]bool{}
 	for i, backend := range logging.Backends {
-		verr.AddError(validators.RootedAt("backends").Index(i).String(), validateBackend(backend))
+		verr.AddError(validators.RootedAt("backends").Index(i).String(), validateLoggingBackend(backend))
 		if usedNames[backend.Name] {
 			verr.AddViolationAt(validators.RootedAt("backends").Index(i).Field("name"), fmt.Sprintf("%q name is already used for another backend", backend.Name))
 		}
@@ -44,36 +68,130 @@ func validateLogging(logging *mesh_proto.Logging) validators.ValidationError {
 	return verr
 }
 
-func validateBackend(backend *mesh_proto.LoggingBackend) validators.ValidationError {
+func validateLoggingBackend(backend *mesh_proto.LoggingBackend) validators.ValidationError {
 	var verr validators.ValidationError
 	if backend.Name == "" {
 		verr.AddViolation("name", "cannot be empty")
 	}
-	if file, ok := backend.GetType().(*mesh_proto.LoggingBackend_File_); ok {
-		verr.AddError("file", validateLoggingFile(file))
-	} else if tcp, ok := backend.GetType().(*mesh_proto.LoggingBackend_Tcp_); ok {
-		verr.AddError("tcp", validateLoggingTcp(tcp))
+	if err := accesslog.ValidateFormat(backend.Format); err != nil {
+		verr.AddViolation("format", err.Error())
+	}
+	switch backend.GetType() {
+	case mesh_proto.LoggingFileType:
+		verr.AddError("config", validateLoggingFile(backend.Conf))
+	case mesh_proto.LoggingTcpType:
+		verr.AddError("config", validateLoggingTcp(backend.Conf))
+	default:
+		verr.AddViolation("type", fmt.Sprintf("unknown backend type. Available backends: %q, %q", mesh_proto.LoggingTcpType, mesh_proto.LoggingFileType))
 	}
 	return verr
 }
 
-func validateLoggingTcp(tcp *mesh_proto.LoggingBackend_Tcp_) validators.ValidationError {
+func validateLoggingTcp(cfgStr *structpb.Struct) validators.ValidationError {
 	var verr validators.ValidationError
-	if tcp.Tcp.Address == "" {
+	cfg := mesh_proto.TcpLoggingBackendConfig{}
+	if err := proto.ToTyped(cfgStr, &cfg); err != nil {
+		verr.AddViolation("", fmt.Sprintf("could not parse config: %s", err.Error()))
+		return verr
+	}
+	if cfg.Address == "" {
 		verr.AddViolation("address", "cannot be empty")
-	} else {
-		host, port, err := net.SplitHostPort(tcp.Tcp.Address)
-		if host == "" || port == "" || err != nil {
-			verr.AddViolation("address", "has to be in format of HOST:PORT")
-		}
+		return verr
+	}
+	host, port, err := net.SplitHostPort(cfg.Address)
+	if host == "" || port == "" || err != nil {
+		verr.AddViolation("address", "has to be in format of HOST:PORT")
 	}
 	return verr
 }
 
-func validateLoggingFile(file *mesh_proto.LoggingBackend_File_) validators.ValidationError {
-	var veer validators.ValidationError
-	if file.File.Path == "" {
-		veer.AddViolation("path", "cannot be empty")
+func validateLoggingFile(cfgStr *structpb.Struct) validators.ValidationError {
+	var verr validators.ValidationError
+	cfg := mesh_proto.FileLoggingBackendConfig{}
+	if err := proto.ToTyped(cfgStr, &cfg); err != nil {
+		verr.AddViolation("", fmt.Sprintf("could not parse config: %s", err.Error()))
+	} else if cfg.Path == "" {
+		verr.AddViolation("path", "cannot be empty")
 	}
-	return veer
+	return verr
+}
+
+func validateTracing(tracing *mesh_proto.Tracing) validators.ValidationError {
+	var verr validators.ValidationError
+	if tracing == nil {
+		return verr
+	}
+	usedNames := map[string]bool{}
+	for i, backend := range tracing.Backends {
+		verr.AddError(validators.RootedAt("backends").Index(i).String(), validateTracingBackend(backend))
+		if usedNames[backend.Name] {
+			verr.AddViolationAt(validators.RootedAt("backends").Index(i).Field("name"), fmt.Sprintf("%q name is already used for another backend", backend.Name))
+		}
+		usedNames[backend.Name] = true
+	}
+	if tracing.DefaultBackend != "" && !usedNames[tracing.DefaultBackend] {
+		verr.AddViolation("defaultBackend", "has to be set to one of the tracing backend in mesh")
+	}
+	return verr
+}
+
+func validateTracingBackend(backend *mesh_proto.TracingBackend) validators.ValidationError {
+	var verr validators.ValidationError
+	if backend.Name == "" {
+		verr.AddViolation("name", "cannot be empty")
+	}
+	if backend.GetType() != mesh_proto.TracingZipkinType {
+		verr.AddViolation("type", fmt.Sprintf("unknown backend type. Available backends: %q", mesh_proto.TracingZipkinType))
+	}
+	if backend.Sampling.GetValue() < 0.0 || backend.Sampling.GetValue() > 100.0 {
+		verr.AddViolation("sampling", "has to be in [0.0 - 100.0] range")
+	}
+	if backend.GetType() == mesh_proto.TracingZipkinType {
+		verr.AddError("config", validateZipkin(backend.Conf))
+	}
+	return verr
+}
+
+func validateZipkin(cfgStr *structpb.Struct) validators.ValidationError {
+	var verr validators.ValidationError
+	cfg := mesh_proto.ZipkinTracingBackendConfig{}
+	if err := proto.ToTyped(cfgStr, &cfg); err != nil {
+		verr.AddViolation("", fmt.Sprintf("could not parse config: %s", err.Error()))
+		return verr
+	}
+	if cfg.ApiVersion != "" && cfg.ApiVersion != "httpJsonV1" && cfg.ApiVersion != "httpJson" && cfg.ApiVersion != "httpProto" {
+		verr.AddViolation("apiVersion", fmt.Sprintf(`has invalid value. %s`, AllowedValuesHint("httpJsonV1", "httpJson", "httpProto")))
+	}
+	if cfg.Url == "" {
+		verr.AddViolation("url", "cannot be empty")
+		return verr
+	}
+	uri, err := url.ParseRequestURI(cfg.Url)
+	if err != nil {
+		verr.AddViolation("url", "invalid URL")
+	} else if uri.Port() == "" {
+		verr.AddViolation("url", "port has to be explicitly specified")
+	}
+	return verr
+}
+
+func validateMetrics(metrics *mesh_proto.Metrics) validators.ValidationError {
+	var verr validators.ValidationError
+	if metrics == nil {
+		return verr
+	}
+	usedNames := map[string]bool{}
+	for i, backend := range metrics.GetBackends() {
+		if usedNames[backend.Name] {
+			verr.AddViolationAt(validators.RootedAt("backends").Index(i).Field("name"), fmt.Sprintf("%q name is already used for another backend", backend.Name))
+		}
+		if backend.GetType() != mesh_proto.MetricsPrometheusType {
+			verr.AddViolationAt(validators.RootedAt("backends").Index(i).Field("type"), fmt.Sprintf("unknown backend type. Available backends: %q", mesh_proto.MetricsPrometheusType))
+		}
+		usedNames[backend.Name] = true
+	}
+	if metrics.GetEnabledBackend() != "" && !usedNames[metrics.GetEnabledBackend()] {
+		verr.AddViolation("enabledBackend", "has to be set to one of the backends in the mesh")
+	}
+	return verr
 }

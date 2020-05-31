@@ -1,13 +1,17 @@
 package store
 
 import (
-	"github.com/Kong/kuma/pkg/core/resources/model"
+	"fmt"
+	"time"
+
+	core_model "github.com/Kong/kuma/pkg/core/resources/model"
 )
 
 type CreateOptions struct {
-	Namespace string
-	Name      string
-	Mesh      string
+	Name         string
+	Mesh         string
+	CreationTime time.Time
+	Owner        core_model.Resource
 }
 
 type CreateOptionsFunc func(*CreateOptions)
@@ -20,19 +24,37 @@ func NewCreateOptions(fs ...CreateOptionsFunc) *CreateOptions {
 	return opts
 }
 
-func CreateBy(key model.ResourceKey) CreateOptionsFunc {
-	return CreateByKey(key.Namespace, key.Name, key.Mesh)
+func CreateBy(key core_model.ResourceKey) CreateOptionsFunc {
+	return CreateByKey(key.Name, key.Mesh)
 }
 
-func CreateByKey(ns, name, mesh string) CreateOptionsFunc {
+func CreateByKey(name, mesh string) CreateOptionsFunc {
 	return func(opts *CreateOptions) {
-		opts.Namespace = ns
 		opts.Name = name
 		opts.Mesh = mesh
 	}
 }
 
+func CreatedAt(creationTime time.Time) CreateOptionsFunc {
+	return func(opts *CreateOptions) {
+		opts.CreationTime = creationTime
+	}
+}
+
+func CreateWithOwner(owner core_model.Resource) CreateOptionsFunc {
+	return func(opts *CreateOptions) {
+		opts.Owner = owner
+	}
+}
+
 type UpdateOptions struct {
+	ModificationTime time.Time
+}
+
+func ModifiedAt(modificationTime time.Time) UpdateOptionsFunc {
+	return func(opts *UpdateOptions) {
+		opts.ModificationTime = modificationTime
+	}
 }
 
 type UpdateOptionsFunc func(*UpdateOptions)
@@ -46,9 +68,8 @@ func NewUpdateOptions(fs ...UpdateOptionsFunc) *UpdateOptions {
 }
 
 type DeleteOptions struct {
-	Namespace string
-	Name      string
-	Mesh      string
+	Name string
+	Mesh string
 }
 
 type DeleteOptionsFunc func(*DeleteOptions)
@@ -61,13 +82,12 @@ func NewDeleteOptions(fs ...DeleteOptionsFunc) *DeleteOptions {
 	return opts
 }
 
-func DeleteBy(key model.ResourceKey) DeleteOptionsFunc {
-	return DeleteByKey(key.Namespace, key.Name, key.Mesh)
+func DeleteBy(key core_model.ResourceKey) DeleteOptionsFunc {
+	return DeleteByKey(key.Name, key.Mesh)
 }
 
-func DeleteByKey(ns, name, mesh string) DeleteOptionsFunc {
+func DeleteByKey(name, mesh string) DeleteOptionsFunc {
 	return func(opts *DeleteOptions) {
-		opts.Namespace = ns
 		opts.Name = name
 		opts.Mesh = mesh
 	}
@@ -94,9 +114,9 @@ func NewDeleteAllOptions(fs ...DeleteAllOptionsFunc) *DeleteAllOptions {
 }
 
 type GetOptions struct {
-	Namespace string
-	Name      string
-	Mesh      string
+	Name    string
+	Mesh    string
+	Version string
 }
 
 type GetOptionsFunc func(*GetOptions)
@@ -109,21 +129,31 @@ func NewGetOptions(fs ...GetOptionsFunc) *GetOptions {
 	return opts
 }
 
-func GetBy(key model.ResourceKey) GetOptionsFunc {
-	return GetByKey(key.Namespace, key.Name, key.Mesh)
+func GetBy(key core_model.ResourceKey) GetOptionsFunc {
+	return GetByKey(key.Name, key.Mesh)
 }
 
-func GetByKey(ns, name, mesh string) GetOptionsFunc {
+func GetByKey(name, mesh string) GetOptionsFunc {
 	return func(opts *GetOptions) {
-		opts.Namespace = ns
 		opts.Name = name
 		opts.Mesh = mesh
 	}
 }
 
+func GetByVersion(version string) GetOptionsFunc {
+	return func(opts *GetOptions) {
+		opts.Version = version
+	}
+}
+
+func (g *GetOptions) HashCode() string {
+	return fmt.Sprintf("%s:%s", g.Name, g.Mesh)
+}
+
 type ListOptions struct {
-	Namespace string
-	Mesh      string
+	Mesh       string
+	PageSize   int
+	PageOffset string
 }
 
 type ListOptionsFunc func(*ListOptions)
@@ -136,14 +166,19 @@ func NewListOptions(fs ...ListOptionsFunc) *ListOptions {
 	return opts
 }
 
-func ListByNamespace(ns string) ListOptionsFunc {
-	return func(opts *ListOptions) {
-		opts.Namespace = ns
-	}
-}
-
 func ListByMesh(mesh string) ListOptionsFunc {
 	return func(opts *ListOptions) {
 		opts.Mesh = mesh
 	}
+}
+
+func ListByPage(size int, offset string) ListOptionsFunc {
+	return func(opts *ListOptions) {
+		opts.PageSize = size
+		opts.PageOffset = offset
+	}
+}
+
+func (l *ListOptions) HashCode() string {
+	return l.Mesh
 }

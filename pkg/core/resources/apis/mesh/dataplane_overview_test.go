@@ -1,13 +1,13 @@
 package mesh_test
 
 import (
-	"github.com/Kong/kuma/api/mesh/v1alpha1"
-	"github.com/Kong/kuma/pkg/test/resources/model"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
 
+	"github.com/Kong/kuma/api/mesh/v1alpha1"
 	. "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
+	"github.com/Kong/kuma/pkg/test/resources/model"
 )
 
 var _ = Describe("DataplaneOverview", func() {
@@ -95,5 +95,61 @@ var _ = Describe("DataplaneOverview", func() {
 				tags:     map[string]string{"service": "mobile", "version": "v2"},
 				expected: DataplaneOverviewResourceList{Items: []*DataplaneOverviewResource{}},
 			}))
+	})
+	Describe("RetainGateWayDataPlanes", func() {
+		dataplanes := DataplaneOverviewResourceList{
+			Items: []*DataplaneOverviewResource{
+				{
+					Spec: v1alpha1.DataplaneOverview{
+						Dataplane: &v1alpha1.Dataplane{
+							Networking: &v1alpha1.Dataplane_Networking{
+								Gateway: &v1alpha1.Dataplane_Networking_Gateway{
+									Tags: map[string]string{
+										"service": "gateway",
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					Spec: v1alpha1.DataplaneOverview{
+						Dataplane: &v1alpha1.Dataplane{
+							Networking: &v1alpha1.Dataplane_Networking{
+								Inbound: []*v1alpha1.Dataplane_Networking_Inbound{
+									{
+										Tags: map[string]string{
+											"service": "mobile",
+											"version": "v1",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		gatewayDataplanes := DataplaneOverviewResourceList{
+			Items: []*DataplaneOverviewResource{
+				{
+					Spec: v1alpha1.DataplaneOverview{
+						Dataplane: &v1alpha1.Dataplane{
+							Networking: &v1alpha1.Dataplane_Networking{
+								Gateway: &v1alpha1.Dataplane_Networking_Gateway{
+									Tags: map[string]string{
+										"service": "gateway",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		It("should retain gateway overviews", func() {
+			dataplanes.RetainGatewayDataplanes()
+			Expect(dataplanes).To(Equal(gatewayDataplanes))
+		})
 	})
 })

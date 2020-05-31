@@ -2,28 +2,27 @@ package webhooks
 
 import (
 	"context"
-	"github.com/Kong/kuma/pkg/core/validators"
-	"k8s.io/api/admission/v1beta1"
 	"net/http"
 
+	"k8s.io/api/admission/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kube_runtime "k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	core_model "github.com/Kong/kuma/pkg/core/resources/model"
 	core_registry "github.com/Kong/kuma/pkg/core/resources/registry"
+	"github.com/Kong/kuma/pkg/core/validators"
 	k8s_resources "github.com/Kong/kuma/pkg/plugins/resources/k8s"
 	k8s_model "github.com/Kong/kuma/pkg/plugins/resources/k8s/native/pkg/model"
 	k8s_registry "github.com/Kong/kuma/pkg/plugins/resources/k8s/native/pkg/registry"
 )
 
-func NewValidatingWebhook(converter k8s_resources.Converter, coreRegistry core_registry.TypeRegistry, k8sRegistry k8s_registry.TypeRegistry) (*admission.Webhook, error) {
-	return &admission.Webhook{
-		Handler: &validatingHandler{
-			coreRegistry: coreRegistry,
-			k8sRegistry:  k8sRegistry,
-			converter:    converter,
-		},
-	}, nil
+func NewValidatingWebhook(converter k8s_resources.Converter, coreRegistry core_registry.TypeRegistry, k8sRegistry k8s_registry.TypeRegistry) AdmissionValidator {
+	return &validatingHandler{
+		coreRegistry: coreRegistry,
+		k8sRegistry:  k8sRegistry,
+		converter:    converter,
+	}
 }
 
 type validatingHandler struct {
@@ -39,6 +38,10 @@ func (h *validatingHandler) InjectDecoder(d *admission.Decoder) error {
 }
 
 func (h *validatingHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
+	if req.Operation == v1beta1.Delete {
+		return admission.Allowed("")
+	}
+
 	resType := core_model.ResourceType(req.Kind.Kind)
 
 	coreRes, err := h.coreRegistry.NewObject(resType)
@@ -60,7 +63,8 @@ func (h *validatingHandler) Handle(ctx context.Context, req admission.Request) a
 
 	if err := coreRes.Validate(); err != nil {
 		if kumaErr, ok := err.(*validators.ValidationError); ok {
-			return convertValidationError(kumaErr, obj)
+			// we assume that coreRes.Validate() returns validation errors of the spec
+			return convertSpecValidationError(kumaErr, obj)
 		}
 		return admission.Denied(err.Error())
 	}
@@ -68,9 +72,21 @@ func (h *validatingHandler) Handle(ctx context.Context, req admission.Request) a
 	return admission.Allowed("")
 }
 
-func convertValidationError(kumaErr *validators.ValidationError, obj k8s_model.KubernetesObject) admission.Response {
+func (h *validatingHandler) Supports(admission.Request) bool {
+	return true
+}
+
+func convertSpecValidationError(kumaErr *validators.ValidationError, obj k8s_model.KubernetesObject) admission.Response {
+	verr := validators.ValidationError{}
+	if kumaErr != nil {
+		verr.AddError("spec", *kumaErr)
+	}
+	return convertValidationErrorOf(verr, obj, obj.GetObjectMeta())
+}
+
+func convertValidationErrorOf(kumaErr validators.ValidationError, obj kube_runtime.Object, objMeta metav1.Object) admission.Response {
 	details := &metav1.StatusDetails{
-		Name: obj.GetObjectMeta().Name,
+		Name: objMeta.GetName(),
 		Kind: obj.GetObjectKind().GroupVersionKind().Kind,
 	}
 	resp := admission.Response{

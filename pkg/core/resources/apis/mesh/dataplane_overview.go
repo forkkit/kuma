@@ -53,7 +53,8 @@ func (t *DataplaneOverviewResource) Validate() error {
 var _ model.ResourceList = &DataplaneOverviewResourceList{}
 
 type DataplaneOverviewResourceList struct {
-	Items []*DataplaneOverviewResource
+	Items      []*DataplaneOverviewResource
+	Pagination model.Pagination
 }
 
 func (l *DataplaneOverviewResourceList) GetItems() []model.Resource {
@@ -79,6 +80,10 @@ func (l *DataplaneOverviewResourceList) AddItem(r model.Resource) error {
 	}
 }
 
+func (l *DataplaneOverviewResourceList) GetPagination() *model.Pagination {
+	return &l.Pagination
+}
+
 func NewDataplaneOverviews(dataplanes DataplaneResourceList, insights DataplaneInsightResourceList) DataplaneOverviewResourceList {
 	insightsByKey := map[model.ResourceKey]*DataplaneInsightResource{}
 	for _, insight := range insights.Items {
@@ -100,7 +105,10 @@ func NewDataplaneOverviews(dataplanes DataplaneResourceList, insights DataplaneI
 		}
 		items = append(items, &overview)
 	}
-	return DataplaneOverviewResourceList{Items: items}
+	return DataplaneOverviewResourceList{
+		Pagination: dataplanes.Pagination,
+		Items:      items,
+	}
 }
 
 func (d *DataplaneOverviewResourceList) RetainMatchingTags(tags map[string]string) {
@@ -111,4 +119,15 @@ func (d *DataplaneOverviewResourceList) RetainMatchingTags(tags map[string]strin
 		}
 	}
 	d.Items = result
+}
+
+// RetainGatewayDataplanes to get only gateway Dataplanes
+func (l *DataplaneOverviewResourceList) RetainGatewayDataplanes() {
+	result := []*DataplaneOverviewResource{}
+	for _, overview := range l.Items {
+		if overview.Spec.GetDataplane().GetNetworking().GetGateway() != nil {
+			result = append(result, overview)
+		}
+	}
+	l.Items = result
 }

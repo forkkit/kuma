@@ -86,14 +86,14 @@ var _ = Describe("kumactl install control-plane", func() {
 			// then
 			Expect(err).ToNot(HaveOccurred())
 			// and
-			expectedManifests := data.SplitYAML(expected)
+			expectedManifests := data.SplitYAML(data.File{Data: expected})
 
 			// when
 			actual := stdout.Bytes()
 			// then
 			Expect(actual).To(MatchYAML(expected))
 			// and
-			actualManifests := data.SplitYAML(actual)
+			actualManifests := data.SplitYAML(data.File{Data: actual})
 
 			// and
 			Expect(len(actualManifests)).To(Equal(len(expectedManifests)))
@@ -115,18 +115,19 @@ var _ = Describe("kumactl install control-plane", func() {
 				"--control-plane-service-name", "kuma-ctrl-plane",
 				"--admission-server-tls-cert", "AdmissionCert",
 				"--admission-server-tls-key", "AdmissionKey",
-				"--injector-image", "kuma-ci/kuma-injector",
 				"--injector-failure-policy", "Crash",
-				"--injector-service-name", "injector",
-				"--injector-tls-cert", "InjectorCert",
-				"--injector-tls-key", "InjectorKey",
 				"--dataplane-image", "kuma-ci/kuma-dp",
 				"--dataplane-init-image", "kuma-ci/kuma-init",
-				"--dataplane-init-version", "dev",
 				"--sds-tls-cert", "SdsCert",
 				"--sds-tls-key", "SdsKey",
 			},
 			goldenFile: "install-control-plane.overrides.golden.yaml",
+		}),
+		Entry("should generate Kubernetes resources with CNI plugin", testCase{
+			extraArgs: []string{
+				"--cni-enabled",
+			},
+			goldenFile: "install-control-plane.cni-enabled.golden.yaml",
 		}),
 	)
 })

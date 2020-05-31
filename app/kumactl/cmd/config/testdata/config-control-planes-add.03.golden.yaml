@@ -1,12 +1,12 @@
 contexts:
   - controlPlane: test1
     defaults:
-      mesh: pilot
+      mesh: demo
     name: test1
   - controlPlane: example
     name: example
     credentials:
-      dataplaneTokenApi:
+      adminApi:
         clientCert: /tmp/client.pem
         clientKey: /tmp/client.key.pem
 controlPlanes:

@@ -3,17 +3,21 @@ package server_test
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/extensions/table"
+	. "github.com/onsi/gomega"
+
 	"github.com/Kong/kuma/app/kuma-ui/pkg/server"
 	"github.com/Kong/kuma/app/kuma-ui/pkg/server/types"
 	gui_server "github.com/Kong/kuma/pkg/config/gui-server"
 	"github.com/Kong/kuma/pkg/test"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/ginkgo/extensions/table"
-	. "github.com/onsi/gomega"
-	"io/ioutil"
-	"net/http"
-	"path/filepath"
-	"strconv"
 )
 
 var _ = Describe("GUI Server", func() {
@@ -27,6 +31,19 @@ var _ = Describe("GUI Server", func() {
 	}
 
 	BeforeEach(func() {
+		// setup api server
+		mux := http.NewServeMux()
+		mux.HandleFunc("/some-endpoint", func(writer http.ResponseWriter, request *http.Request) {
+			defer GinkgoRecover()
+			writer.WriteHeader(200)
+			_, err := writer.Write([]byte(fmt.Sprintf("response from api server: %s", request.URL.Path)))
+			Expect(err).ToNot(HaveOccurred())
+		})
+		apiSrv := httptest.NewServer(mux)
+		apiSrvPort, err := strconv.Atoi(strings.Split(apiSrv.Listener.Addr().String(), ":")[1])
+		Expect(err).ToNot(HaveOccurred())
+
+		// setup gui server
 		port, err := test.GetFreePort()
 		Expect(err).ToNot(HaveOccurred())
 		baseUrl = "http://localhost:" + strconv.Itoa(port)
@@ -38,6 +55,7 @@ var _ = Describe("GUI Server", func() {
 					ApiUrl:      "http://kuma.internal:5681",
 					Environment: "kubernetes",
 				},
+				ApiServerUrl: fmt.Sprintf("http://localhost:%d", apiSrvPort),
 			},
 		}
 		stop = make(chan struct{})
@@ -94,10 +112,6 @@ var _ = Describe("GUI Server", func() {
 			urlPath:      "/",
 			expectedFile: "index.html",
 		}),
-		Entry("should serve data.js", testCase{
-			urlPath:      "/data.js",
-			expectedFile: "data.js",
-		}),
 	)
 
 	It("should serve the gui config", func() {
@@ -123,6 +137,24 @@ var _ = Describe("GUI Server", func() {
 
 		// then
 		Expect(cfg).To(Equal(guiConfig))
+	})
+
+	It("should proxy requests to api server", func() {
+		// when
+		resp, err := http.Get(fmt.Sprintf("%s/api/some-endpoint", baseUrl))
+
+		// then
+		Expect(err).ToNot(HaveOccurred())
+
+		// when
+		received, err := ioutil.ReadAll(resp.Body)
+
+		// then
+		Expect(resp.Body.Close()).To(Succeed())
+		Expect(err).ToNot(HaveOccurred())
+
+		// and
+		Expect(string(received)).To(Equal("response from api server: /some-endpoint"))
 	})
 
 })

@@ -5,17 +5,16 @@ import (
 	"sync"
 	"time"
 
+	envoy "github.com/envoyproxy/go-control-plane/envoy/api/v2"
+	envoy_xds "github.com/envoyproxy/go-control-plane/pkg/server/v2"
+	"github.com/golang/protobuf/proto"
+
+	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/core"
 	core_model "github.com/Kong/kuma/pkg/core/resources/model"
 	core_runtime "github.com/Kong/kuma/pkg/core/runtime"
 	core_xds "github.com/Kong/kuma/pkg/core/xds"
 	util_proto "github.com/Kong/kuma/pkg/util/proto"
-
-	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
-	"github.com/golang/protobuf/proto"
-
-	envoy "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoy_xds "github.com/envoyproxy/go-control-plane/pkg/server"
 )
 
 var (
@@ -120,7 +119,7 @@ func (c *dataplaneStatusTracker) OnStreamRequest(streamID int64, req *envoy.Disc
 	// infer Dataplane id
 	if state.dataplaneId == (core_model.ResourceKey{}) {
 		if id, err := core_xds.ParseProxyId(req.Node); err == nil {
-			state.dataplaneId = core_model.ResourceKey{Mesh: id.Mesh, Namespace: id.Namespace, Name: id.Name}
+			state.dataplaneId = core_model.ResourceKey{Mesh: id.Mesh, Name: id.Name}
 			// kick off async Dataplane status flusher
 			go c.createStatusSink(state).Start(state.stop)
 		} else {

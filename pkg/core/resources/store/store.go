@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/pkg/errors"
+
 	"github.com/Kong/kuma/pkg/core/resources/model"
 )
 
@@ -44,9 +46,6 @@ func (s *strictResourceStore) Create(ctx context.Context, r model.Resource, fs .
 	if opts.Name == "" {
 		return fmt.Errorf("ResourceStore.Create() requires options.Name to be a non-empty value")
 	}
-	if opts.Namespace == "" {
-		return fmt.Errorf("ResourceStore.Create() requires options.Namespace to be a non-empty value")
-	}
 	if opts.Mesh == "" {
 		return fmt.Errorf("ResourceStore.Create() requires options.Mesh to be a non-empty value")
 	}
@@ -69,18 +68,12 @@ func (s *strictResourceStore) Delete(ctx context.Context, r model.Resource, fs .
 	if opts.Name == "" {
 		return fmt.Errorf("ResourceStore.Delete() requires options.Name to be a non-empty value")
 	}
-	if opts.Namespace == "" {
-		return fmt.Errorf("ResourceStore.Delete() requires options.Namespace to be a non-empty value")
-	}
 	if opts.Mesh == "" {
 		return fmt.Errorf("ResourceStore.Delete() requires options.Mesh to be a non-empty value")
 	}
 	if r.GetMeta() != nil {
 		if opts.Name != r.GetMeta().GetName() {
 			return fmt.Errorf("ResourceStore.Delete() requires resource.GetMeta() either to be a nil or resource.GetMeta().GetName() == options.Name")
-		}
-		if opts.Namespace != r.GetMeta().GetNamespace() {
-			return fmt.Errorf("ResourceStore.Delete() requires resource.GetMeta() either to be a nil or resource.GetMeta().GetNamespace() == options.Namespace")
 		}
 		if opts.Mesh != r.GetMeta().GetMesh() {
 			return fmt.Errorf("ResourceStore.Delete() requires resource.GetMeta() either to be a nil or resource.GetMeta().GetMesh() == options.Mesh")
@@ -98,9 +91,6 @@ func (s *strictResourceStore) Get(ctx context.Context, r model.Resource, fs ...G
 	opts := NewGetOptions(fs...)
 	if opts.Name == "" {
 		return fmt.Errorf("ResourceStore.Get() requires options.Name to be a non-empty value")
-	}
-	if opts.Namespace == "" {
-		return fmt.Errorf("ResourceStore.Get() requires options.Namespace to be a non-empty value")
 	}
 	if opts.Mesh == "" {
 		return fmt.Errorf("ResourceStore.Get() requires options.Mesh to be a non-empty value")
@@ -122,18 +112,28 @@ func (s *strictResourceStore) Close() error {
 	return nil
 }
 
-func ErrorResourceNotFound(rt model.ResourceType, namespace, name, mesh string) error {
-	return fmt.Errorf("Resource not found: type=%q namespace=%q name=%q mesh=%q", rt, namespace, name, mesh)
+func ErrorResourceNotFound(rt model.ResourceType, name, mesh string) error {
+	return fmt.Errorf("Resource not found: type=%q name=%q mesh=%q", rt, name, mesh)
 }
 
-func ErrorResourceAlreadyExists(rt model.ResourceType, namespace, name, mesh string) error {
-	return fmt.Errorf("Resource already exists: type=%q namespace=%q name=%q mesh=%q", rt, namespace, name, mesh)
+func ErrorResourceAlreadyExists(rt model.ResourceType, name, mesh string) error {
+	return fmt.Errorf("Resource already exists: type=%q name=%q mesh=%q", rt, name, mesh)
 }
 
-func ErrorResourceConflict(rt model.ResourceType, namespace, name, mesh string) error {
-	return fmt.Errorf("Resource conflict: type=%q namespace=%q name=%q mesh=%q", rt, namespace, name, mesh)
+func ErrorResourceConflict(rt model.ResourceType, name, mesh string) error {
+	return fmt.Errorf("Resource conflict: type=%q name=%q mesh=%q", rt, name, mesh)
 }
+
+func ErrorResourcePreconditionFailed(rt model.ResourceType, name, mesh string) error {
+	return fmt.Errorf("Resource precondition failed: type=%q name=%q mesh=%q", rt, name, mesh)
+}
+
+var ErrorInvalidOffset = errors.New("invalid offset")
 
 func IsResourceNotFound(err error) bool {
 	return err != nil && strings.HasPrefix(err.Error(), "Resource not found")
+}
+
+func IsResourcePreconditionFailed(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "Resource precondition failed")
 }

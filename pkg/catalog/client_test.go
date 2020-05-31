@@ -2,13 +2,15 @@ package catalog_test
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
+
 	"github.com/Kong/kuma/pkg/catalog"
 	catalog_client "github.com/Kong/kuma/pkg/catalog/client"
 	config_catalog "github.com/Kong/kuma/pkg/config/api-server/catalog"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-	"net/http"
-	"net/http/httptest"
 )
 
 var _ = Describe("Catalog client", func() {
@@ -18,7 +20,7 @@ var _ = Describe("Catalog client", func() {
 			Bootstrap: config_catalog.BootstrapApiConfig{
 				Url: "http://kuma.internal:3333",
 			},
-			DataplaneToken: config_catalog.DataplaneTokenApiConfig{
+			Admin: config_catalog.AdminApiConfig{
 				LocalUrl:  "http://localhost:1111",
 				PublicUrl: "https://kuma.internal:2222",
 			},
@@ -29,7 +31,7 @@ var _ = Describe("Catalog client", func() {
 				Bootstrap: catalog.BootstrapApi{
 					Url: "http://kuma.internal:3333",
 				},
-				DataplaneToken: catalog.DataplaneTokenApi{
+				Admin: catalog.AdminApi{
 					LocalUrl:  "http://localhost:1111",
 					PublicUrl: "https://kuma.internal:2222",
 				},

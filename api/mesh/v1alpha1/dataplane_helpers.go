@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"reflect"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,8 +12,12 @@ import (
 )
 
 const (
+	// Mandatory tag that has a reserved meaning in Kuma.
 	ServiceTag     = "service"
 	ServiceUnknown = "unknown"
+	// Optional tag that has a reserved meaning in Kuma.
+	// If absent, Kuma will treat application's protocol as opaque TCP.
+	ProtocolTag = "protocol"
 )
 
 // ServiceTagValue represents the value of "service" tag.
@@ -59,26 +62,32 @@ func (i OutboundInterface) String() string {
 	return fmt.Sprintf("%s:%d", i.DataplaneIP, i.DataplanePort)
 }
 
-const inboundInterfacePattern = `^(?P<dataplane_ip>(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)):(?P<dataplane_port>[0-9]{1,5}):(?P<workload_port>[0-9]{1,5})$`
-
-var inboundInterfaceRegexp = regexp.MustCompile(inboundInterfacePattern)
+const inboundInterfaceBNF = `( IPv4 | '[' IPv6 ']' ) ':' DATAPLANE_PORT ':' WORKLOAD_PORT`
 
 func ParseInboundInterface(text string) (InboundInterface, error) {
-	groups := inboundInterfaceRegexp.FindStringSubmatch(text)
-	if groups == nil {
-		return InboundInterface{}, errors.Errorf("invalid format: expected %s, got %q", inboundInterfacePattern, text)
+	wpInd := strings.LastIndex(text, ":")
+	if wpInd < 0 {
+		return InboundInterface{}, errors.Errorf("invalid format: expected %q, got %q", inboundInterfaceBNF, text)
 	}
-	dataplaneIP, err := ParseIP(groups[1])
-	if err != nil {
-		return InboundInterface{}, errors.Wrapf(err, "invalid <DATAPLANE_IP> in %q", text)
+	dpInd := strings.LastIndex(text[:wpInd], ":")
+	if dpInd < 0 {
+		return InboundInterface{}, errors.Errorf("invalid format: expected %q, got %q", inboundInterfaceBNF, text)
 	}
-	dataplanePort, err := ParsePort(groups[2])
+	host, port, err := net.SplitHostPort(text[:wpInd])
 	if err != nil {
-		return InboundInterface{}, errors.Wrapf(err, "invalid <DATAPLANE_PORT> in %q", text)
+		return InboundInterface{}, errors.Errorf("invalid format: expected %q, got %q", inboundInterfaceBNF, text)
 	}
-	workloadPort, err := ParsePort(groups[3])
+	dataplaneIP, err := ParseIP(host)
 	if err != nil {
-		return InboundInterface{}, errors.Wrapf(err, "invalid <WORKLOAD_PORT> in %q", text)
+		return InboundInterface{}, errors.Wrapf(err, "invalid DATAPLANE_IP in %q", text)
+	}
+	dataplanePort, err := ParsePort(port)
+	if err != nil {
+		return InboundInterface{}, errors.Wrapf(err, "invalid DATAPLANE_PORT in %q", text)
+	}
+	workloadPort, err := ParsePort(text[wpInd+1:])
+	if err != nil {
+		return InboundInterface{}, errors.Wrapf(err, "invalid WORKLOAD_PORT in %q", text)
 	}
 	return InboundInterface{
 		DataplaneIP:   dataplaneIP,
@@ -87,33 +96,63 @@ func ParseInboundInterface(text string) (InboundInterface, error) {
 	}, nil
 }
 
-const outboundInterfacePattern = `^(?P<dataplane_ip>(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|):(?P<dataplane_port>[0-9]{1,5})$`
-
-var outboundInterfaceRegexp = regexp.MustCompile(outboundInterfacePattern)
+const outboundInterfaceBNF = `[ IPv4 | '[' IPv6 ']' ] ':' DATAPLANE_PORT`
 
 func ParseOutboundInterface(text string) (OutboundInterface, error) {
-	groups := outboundInterfaceRegexp.FindStringSubmatch(text)
-	if groups == nil {
-		return OutboundInterface{}, errors.Errorf("invalid format: expected %s, got %q", outboundInterfacePattern, text)
+	wpInd := strings.LastIndex(text, ":")
+	if wpInd < 0 {
+		return OutboundInterface{}, errors.Errorf("invalid format: expected %q, got %q", outboundInterfaceBNF, text)
 	}
+	port := text[wpInd+1:]
 	var dataplaneIP string
-	if groups[1] == "" {
+	if wpInd == 0 {
 		dataplaneIP = "127.0.0.1"
 	} else {
 		var err error
-		dataplaneIP, err = ParseIP(groups[1])
+		dataplaneIP, port, err = net.SplitHostPort(text)
 		if err != nil {
-			return OutboundInterface{}, errors.Wrapf(err, "invalid <DATAPLANE_IP> in %q", text)
+			return OutboundInterface{}, errors.Errorf("invalid format: expected %q, got %q", outboundInterfaceBNF, text)
+		}
+		dataplaneIP, err = ParseIP(dataplaneIP)
+		if err != nil {
+			return OutboundInterface{}, errors.Wrapf(err, "invalid DATAPLANE_IP in %q", text)
 		}
 	}
-	dataplanePort, err := ParsePort(groups[2])
+	dataplanePort, err := ParsePort(port)
 	if err != nil {
-		return OutboundInterface{}, errors.Wrapf(err, "invalid <DATAPLANE_PORT> in %q", text)
+		return OutboundInterface{}, errors.Wrapf(err, "invalid DATAPLANE_PORT in %q", text)
 	}
 	return OutboundInterface{
 		DataplaneIP:   dataplaneIP,
 		DataplanePort: dataplanePort,
 	}, nil
+}
+
+func (n *Dataplane_Networking) GetOutboundInterfaces() ([]OutboundInterface, error) {
+	if n == nil {
+		return nil, nil
+	}
+	ofaces := make([]OutboundInterface, len(n.Outbound))
+	for i, outbound := range n.Outbound {
+		if outbound.Interface != "" { // legacy format
+			oface, err := ParseOutboundInterface(outbound.Interface)
+			if err != nil {
+				return nil, err
+			}
+			ofaces[i] = oface
+		} else {
+			oface := OutboundInterface{
+				DataplanePort: outbound.Port,
+			}
+			if outbound.Address != "" {
+				oface.DataplaneIP = outbound.Address
+			} else {
+				oface.DataplaneIP = "127.0.0.1"
+			}
+			ofaces[i] = oface
+		}
+	}
+	return ofaces, nil
 }
 
 func ParsePort(text string) (uint32, error) {
@@ -135,15 +174,12 @@ func ParseIP(text string) (string, error) {
 }
 
 func (n *Dataplane_Networking) GetInboundInterface(service string) (*InboundInterface, error) {
-	for _, inbound := range n.Inbound {
+	for i, inbound := range n.Inbound {
 		if inbound.Tags[ServiceTag] != service {
 			continue
 		}
-		iface, err := ParseInboundInterface(inbound.Interface)
-		if err != nil {
-			return nil, err
-		}
-		return &iface, nil
+		iface, err := n.GetInboundInterfaceByIdx(i)
+		return &iface, err
 	}
 	return nil, errors.Errorf("Dataplane has no Inbound Interface for service %q", service)
 }
@@ -153,14 +189,39 @@ func (n *Dataplane_Networking) GetInboundInterfaces() ([]InboundInterface, error
 		return nil, nil
 	}
 	ifaces := make([]InboundInterface, len(n.Inbound))
-	for i, inbound := range n.Inbound {
-		iface, err := ParseInboundInterface(inbound.Interface)
+	for i, _ := range n.Inbound {
+		iface, err := n.GetInboundInterfaceByIdx(i)
 		if err != nil {
 			return nil, err
 		}
 		ifaces[i] = iface
 	}
 	return ifaces, nil
+}
+
+func (n *Dataplane_Networking) GetInboundInterfaceByIdx(idx int) (InboundInterface, error) {
+	if idx >= len(n.Inbound) {
+		return InboundInterface{}, errors.Errorf("there is no inbound for index %d. Dataplane has %d inbounds", idx, len(n.Inbound))
+	}
+	inbound := n.Inbound[idx]
+	if inbound.Interface != "" {
+		return ParseInboundInterface(inbound.Interface)
+	} else {
+		iface := InboundInterface{
+			DataplanePort: inbound.Port,
+		}
+		if inbound.Address != "" {
+			iface.DataplaneIP = inbound.Address
+		} else {
+			iface.DataplaneIP = n.Address
+		}
+		if inbound.ServicePort != 0 {
+			iface.WorkloadPort = inbound.ServicePort
+		} else {
+			iface.WorkloadPort = inbound.Port
+		}
+		return iface, nil
+	}
 }
 
 // Matches is simply an alias for MatchTags to make source code more aesthetic.
@@ -177,7 +238,38 @@ func (d *Dataplane) MatchTags(selector TagSelector) bool {
 			return true
 		}
 	}
+	if d.GetNetworking().GetGateway() != nil {
+		if d.Networking.Gateway.MatchTags(selector) {
+			return true
+		}
+	}
 	return false
+}
+
+func (d *Dataplane_Networking_Gateway) MatchTags(selector TagSelector) bool {
+	return selector.Matches(d.Tags)
+}
+
+// GetService returns a service represented by this inbound interface.
+//
+// The purpose of this method is to encapsulate implementation detail
+// that service is modeled as a tag rather than a separate field.
+func (d *Dataplane_Networking_Inbound) GetService() string {
+	if d == nil {
+		return ""
+	}
+	return d.Tags[ServiceTag]
+}
+
+// GetProtocol returns a protocol supported by this inbound interface.
+//
+// The purpose of this method is to encapsulate implementation detail
+// that protocol is modeled as a tag rather than a separate field.
+func (d *Dataplane_Networking_Inbound) GetProtocol() string {
+	if d == nil {
+		return ""
+	}
+	return d.Tags[ProtocolTag]
 }
 
 func (d *Dataplane_Networking_Inbound) MatchTags(selector TagSelector) bool {
@@ -243,8 +335,26 @@ func MatchTags(tags map[string]string) TagSelector {
 // Set of tags that only allows a single value per key.
 type SingleValueTagSet map[string]string
 
+func (t SingleValueTagSet) Keys() []string {
+	keys := make([]string, 0, len(t))
+	for key := range t {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // Set of tags that allows multiple values per key.
 type MultiValueTagSet map[string]map[string]bool
+
+func (t MultiValueTagSet) Keys() []string {
+	keys := make([]string, 0, len(t))
+	for key := range t {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 func (t MultiValueTagSet) Values(key string) []string {
 	if t == nil {
@@ -268,6 +378,13 @@ func (d *Dataplane) Tags() MultiValueTagSet {
 			}
 			tags[tag][value] = true
 		}
+	}
+	for tag, value := range d.GetNetworking().GetGateway().GetTags() {
+		_, exists := tags[tag]
+		if !exists {
+			tags[tag] = map[string]bool{}
+		}
+		tags[tag][value] = true
 	}
 	return tags
 }

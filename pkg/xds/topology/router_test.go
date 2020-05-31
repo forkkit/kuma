@@ -2,6 +2,7 @@ package topology_test
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
@@ -52,13 +53,22 @@ var _ = Describe("TrafficRoute", func() {
 				},
 				Spec: mesh_proto.Dataplane{
 					Networking: &mesh_proto.Dataplane_Networking{
+						Address: "192.168.0.1",
 						Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-							{Tags: map[string]string{"service": "backend", "region": "eu"}, Interface: "192.168.0.1:8080:18080"},
-							{Tags: map[string]string{"service": "frontend", "region": "eu"}, Interface: "192.168.0.1:7070:17070"},
+							{
+								Tags:        map[string]string{"service": "backend", "region": "eu"},
+								Port:        8080,
+								ServicePort: 18080,
+							},
+							{
+								Tags:        map[string]string{"service": "frontend", "region": "eu"},
+								Port:        7070,
+								ServicePort: 17070,
+							},
 						},
 						Outbound: []*mesh_proto.Dataplane_Networking_Outbound{
-							{Service: "redis", Interface: ":10001"},
-							{Service: "elastic", Interface: ":10002"},
+							{Service: "redis", Port: 10001},
+							{Service: "elastic", Port: 10002},
 						},
 					},
 				},
@@ -146,7 +156,6 @@ var _ = Describe("TrafficRoute", func() {
 		sameMeta := func(meta1, meta2 core_model.ResourceMeta) bool {
 			return meta1.GetMesh() == meta2.GetMesh() &&
 				meta1.GetName() == meta2.GetName() &&
-				meta1.GetNamespace() == meta2.GetNamespace() &&
 				meta1.GetVersion() == meta2.GetVersion()
 		}
 		type testCase struct {
@@ -270,8 +279,7 @@ var _ = Describe("TrafficRoute", func() {
 				routes: []*mesh_core.TrafficRouteResource{
 					{
 						Meta: &test_model.ResourceMeta{
-							Name:      "everything-to-elastic-v1",
-							Namespace: "some",
+							Name: "everything-to-elastic-v1",
 						},
 						Spec: mesh_proto.TrafficRoute{
 							Sources: []*mesh_proto.Selector{
@@ -309,13 +317,12 @@ var _ = Describe("TrafficRoute", func() {
 					},
 					"elastic": &mesh_core.TrafficRouteResource{
 						Meta: &test_model.ResourceMeta{
-							Name:      "everything-to-elastic-v1",
-							Namespace: "some",
+							Name: "everything-to-elastic-v1",
 						},
 					},
 				},
 			}),
-			Entry("TrafficRoutes should be ordered by namespace to consistently pick between two equally specific routes", testCase{
+			Entry("TrafficRoutes should be picked by latest creation time given two equally specific routes", testCase{
 				dataplane: &mesh_core.DataplaneResource{
 					Spec: mesh_proto.Dataplane{
 						Networking: &mesh_proto.Dataplane_Networking{
@@ -331,72 +338,8 @@ var _ = Describe("TrafficRoute", func() {
 				routes: []*mesh_core.TrafficRouteResource{
 					{
 						Meta: &test_model.ResourceMeta{
-							Name:      "everything-to-blackhole", // although name `everything-to-blackhole` precedes `everything-to-hollygrail` lexicographically, namespace value is considered first
-							Namespace: "order-2",
-						},
-						Spec: mesh_proto.TrafficRoute{
-							Sources: []*mesh_proto.Selector{
-								{Match: mesh_proto.TagSelector{"service": "*"}},
-							},
-							Destinations: []*mesh_proto.Selector{
-								{Match: mesh_proto.TagSelector{"service": "*"}},
-							},
-							Conf: []*mesh_proto.TrafficRoute_WeightedDestination{
-								{
-									Weight:      100,
-									Destination: mesh_proto.TagSelector{"service": "blackhole"},
-								},
-							},
-						},
-					},
-					{
-						Meta: &test_model.ResourceMeta{
-							Name:      "everything-to-hollygrail",
-							Namespace: "order-1",
-						},
-						Spec: mesh_proto.TrafficRoute{
-							Sources: []*mesh_proto.Selector{
-								{Match: mesh_proto.TagSelector{"service": "*"}},
-							},
-							Destinations: []*mesh_proto.Selector{
-								{Match: mesh_proto.TagSelector{"service": "*"}},
-							},
-							Conf: []*mesh_proto.TrafficRoute_WeightedDestination{
-								{
-									Weight:      100,
-									Destination: mesh_proto.TagSelector{"service": "hollygrail"},
-								},
-							},
-						},
-					},
-				},
-				expected: core_xds.RouteMap{
-					"redis": &mesh_core.TrafficRouteResource{
-						Meta: &test_model.ResourceMeta{
-							Name:      "everything-to-hollygrail",
-							Namespace: "order-1",
-						},
-					},
-				},
-			}),
-			Entry("TrafficRoutes should be ordered by name to consistently pick between two equally specific routes", testCase{
-				dataplane: &mesh_core.DataplaneResource{
-					Spec: mesh_proto.Dataplane{
-						Networking: &mesh_proto.Dataplane_Networking{
-							Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-								{Tags: map[string]string{"service": "backend"}},
-							},
-							Outbound: []*mesh_proto.Dataplane_Networking_Outbound{
-								{Service: "redis"},
-							},
-						},
-					},
-				},
-				routes: []*mesh_core.TrafficRouteResource{
-					{
-						Meta: &test_model.ResourceMeta{
-							Name:      "everything-to-hollygrail",
-							Namespace: "default",
+							Name:         "everything-to-hollygrail",
+							CreationTime: time.Unix(1, 1),
 						},
 						Spec: mesh_proto.TrafficRoute{
 							Sources: []*mesh_proto.Selector{
@@ -415,8 +358,8 @@ var _ = Describe("TrafficRoute", func() {
 					},
 					{
 						Meta: &test_model.ResourceMeta{
-							Name:      "everything-to-blackhole",
-							Namespace: "default",
+							Name:         "everything-to-blackhole",
+							CreationTime: time.Unix(0, 0),
 						},
 						Spec: mesh_proto.TrafficRoute{
 							Sources: []*mesh_proto.Selector{
@@ -437,8 +380,7 @@ var _ = Describe("TrafficRoute", func() {
 				expected: core_xds.RouteMap{
 					"redis": &mesh_core.TrafficRouteResource{
 						Meta: &test_model.ResourceMeta{
-							Name:      "everything-to-blackhole",
-							Namespace: "default",
+							Name: "everything-to-hollygrail",
 						},
 					},
 				},
@@ -626,7 +568,7 @@ var _ = Describe("TrafficRoute", func() {
 					},
 				},
 			}),
-			Entry("in case if TrafficRoutes have equal aggregate ranks, most specific one should be selected based on ordering by name", testCase{
+			Entry("in case if TrafficRoutes have equal aggregate ranks, most specific one should be selected based on last creation time", testCase{
 				dataplane: &mesh_core.DataplaneResource{
 					Spec: mesh_proto.Dataplane{
 						Networking: &mesh_proto.Dataplane_Networking{
@@ -642,7 +584,8 @@ var _ = Describe("TrafficRoute", func() {
 				routes: []*mesh_core.TrafficRouteResource{
 					{
 						Meta: &test_model.ResourceMeta{
-							Name: "equally-specific-2",
+							Name:         "equally-specific-2",
+							CreationTime: time.Unix(1, 1),
 						},
 						Spec: mesh_proto.TrafficRoute{
 							Sources: []*mesh_proto.Selector{
@@ -661,7 +604,8 @@ var _ = Describe("TrafficRoute", func() {
 					},
 					{
 						Meta: &test_model.ResourceMeta{
-							Name: "equally-specific-1",
+							Name:         "equally-specific-1",
+							CreationTime: time.Unix(0, 0),
 						},
 						Spec: mesh_proto.TrafficRoute{
 							Sources: []*mesh_proto.Selector{
@@ -682,7 +626,7 @@ var _ = Describe("TrafficRoute", func() {
 				expected: core_xds.RouteMap{
 					"redis": &mesh_core.TrafficRouteResource{
 						Meta: &test_model.ResourceMeta{
-							Name: "equally-specific-1",
+							Name: "equally-specific-2",
 						},
 					},
 				},
@@ -713,8 +657,8 @@ var _ = Describe("TrafficRoute", func() {
 					Spec: mesh_proto.Dataplane{
 						Networking: &mesh_proto.Dataplane_Networking{
 							Outbound: []*mesh_proto.Dataplane_Networking_Outbound{
-								{Service: "redis", Interface: ":10001"},
-								{Service: "elastic", Interface: ":10002"},
+								{Service: "redis", Port: 10001},
+								{Service: "elastic", Port: 10002},
 							},
 						},
 					},
@@ -734,8 +678,8 @@ var _ = Describe("TrafficRoute", func() {
 					Spec: mesh_proto.Dataplane{
 						Networking: &mesh_proto.Dataplane_Networking{
 							Outbound: []*mesh_proto.Dataplane_Networking_Outbound{
-								{Service: "redis", Interface: ":10001"},
-								{Service: "elastic", Interface: ":10002"},
+								{Service: "redis", Port: 10001},
+								{Service: "elastic", Port: 10002},
 							},
 						},
 					},

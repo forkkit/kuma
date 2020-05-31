@@ -1,7 +1,6 @@
 package generator_test
 
 import (
-	xds_context "github.com/Kong/kuma/pkg/xds/context"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
@@ -9,10 +8,10 @@ import (
 	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	mesh_core "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	model "github.com/Kong/kuma/pkg/core/xds"
-	util_proto "github.com/Kong/kuma/pkg/util/proto"
-	"github.com/Kong/kuma/pkg/xds/generator"
-
 	test_model "github.com/Kong/kuma/pkg/test/resources/model"
+	util_proto "github.com/Kong/kuma/pkg/util/proto"
+	xds_context "github.com/Kong/kuma/pkg/xds/context"
+	"github.com/Kong/kuma/pkg/xds/generator"
 )
 
 var _ = Describe("ProxyTemplateRawSource", func() {
@@ -43,15 +42,19 @@ var _ = Describe("ProxyTemplateRawSource", func() {
 			},
 			Entry("should fail when `resource` field is empty", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "side-car"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 							},
 						},
@@ -67,15 +70,19 @@ var _ = Describe("ProxyTemplateRawSource", func() {
 			}),
 			Entry("should fail when `resource` field is neither a YAML nor a JSON", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "side-car"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 							},
 						},
@@ -90,15 +97,19 @@ var _ = Describe("ProxyTemplateRawSource", func() {
 			}),
 			Entry("should fail when `resource` field has unknown @type", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "side-car"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 							},
 						},
@@ -115,15 +126,19 @@ var _ = Describe("ProxyTemplateRawSource", func() {
 			}),
 			Entry("should fail when `resource` field is a YAML without '@type' field", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "side-car"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 							},
 						},
@@ -151,15 +166,19 @@ var _ = Describe("ProxyTemplateRawSource", func() {
 			}),
 			Entry("should fail when `resource` field is an invalid xDS resource", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "side-car"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 							},
 						},
@@ -209,24 +228,32 @@ var _ = Describe("ProxyTemplateRawSource", func() {
 			// then
 			Expect(err).ToNot(HaveOccurred())
 
+			// when
+			resp, err := model.ResourceList(rs).ToDeltaDiscoveryResponse()
 			// then
-			resp := generator.ResourceList(rs).ToDeltaDiscoveryResponse()
-			actual, err := util_proto.ToYAML(resp)
-
 			Expect(err).ToNot(HaveOccurred())
+			// when
+			actual, err := util_proto.ToYAML(resp)
+			// then
+			Expect(err).ToNot(HaveOccurred())
+
 			Expect(actual).To(MatchYAML(given.expected))
 		},
 			Entry("should support empty resource list", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "side-car"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 							},
 						},
@@ -237,15 +264,19 @@ var _ = Describe("ProxyTemplateRawSource", func() {
 			}),
 			Entry("should support Listener resource as YAML", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "side-car"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 							},
 						},
@@ -294,15 +325,19 @@ var _ = Describe("ProxyTemplateRawSource", func() {
 			}),
 			Entry("should support Cluster resource as YAML", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "side-car"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 							},
 						},
@@ -349,15 +384,19 @@ var _ = Describe("ProxyTemplateRawSource", func() {
 			}),
 			Entry("should support Cluster resource as JSON", testCase{
 				proxy: &model.Proxy{
-					Id: model.ProxyId{Name: "side-car", Namespace: "default"},
+					Id: model.ProxyId{Name: "side-car"},
 					Dataplane: &mesh_core.DataplaneResource{
 						Meta: &test_model.ResourceMeta{
 							Version: "v1",
 						},
 						Spec: mesh_proto.Dataplane{
 							Networking: &mesh_proto.Dataplane_Networking{
+								Address: "192.168.0.1",
 								Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
-									{Interface: "192.168.0.1:80:8080"},
+									{
+										Port:        80,
+										ServicePort: 8080,
+									},
 								},
 							},
 						},

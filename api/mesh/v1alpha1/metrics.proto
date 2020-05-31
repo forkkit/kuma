@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package kuma.mesh.v1alpha1;
+
+option go_package = "v1alpha1";
+
+import "google/protobuf/struct.proto";
+
+// Metrics defines configuration for metrics that should be collected and
+// exposed by dataplanes.
+message Metrics {
+
+  // Name of the enabled backend
+  string enabledBackend = 1;
+
+  // List of available Metrics backends
+  repeated MetricsBackend backends = 2;
+}
+
+// MetricsBackend defines metric backends
+message MetricsBackend {
+  // Name of the backend, can be then used in Mesh.metrics.enabledBackend
+  string name = 1;
+
+  // Type of the backend (Kuma ships with 'prometheus')
+  string type = 2;
+
+  // Configuration of the backend
+  google.protobuf.Struct conf = 3;
+}
+
+// PrometheusMetricsBackendConfig defines configuration of Prometheus backend
+message PrometheusMetricsBackendConfig {
+  // Port on which a dataplane should expose HTTP endpoint with Prometheus
+  // metrics.
+  uint32 port = 1;
+
+  // Path on which a dataplane should expose HTTP endpoint with Prometheus
+  // metrics.
+  string path = 2;
+}

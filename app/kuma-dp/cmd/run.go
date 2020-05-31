@@ -1,11 +1,15 @@
 package cmd
 
 import (
-	"github.com/Kong/kuma/pkg/catalog/client"
+	"crypto/tls"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"time"
+
+	kuma_version "github.com/Kong/kuma/pkg/version"
+
+	"github.com/Kong/kuma/pkg/catalog/client"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -15,7 +19,10 @@ import (
 	"github.com/Kong/kuma/app/kuma-dp/pkg/dataplane/envoy"
 	"github.com/Kong/kuma/pkg/config"
 	kuma_dp "github.com/Kong/kuma/pkg/config/app/kuma-dp"
+	config_types "github.com/Kong/kuma/pkg/config/types"
 	"github.com/Kong/kuma/pkg/core"
+	"github.com/Kong/kuma/pkg/core/runtime/component"
+	util_net "github.com/Kong/kuma/pkg/util/net"
 )
 
 type CatalogClientFactory func(string) (client.CatalogClient, error)
@@ -23,7 +30,11 @@ type CatalogClientFactory func(string) (client.CatalogClient, error)
 var (
 	runLog = dataplaneLog.WithName("run")
 	// overridable by tests
-	bootstrapGenerator   = envoy.NewRemoteBootstrapGenerator(&http.Client{Timeout: 10 * time.Second})
+	bootstrapGenerator = envoy.NewRemoteBootstrapGenerator(&http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	},
+	)
 	catalogClientFactory = client.NewCatalogClient
 )
 
@@ -64,6 +75,16 @@ func newRunCmd() *cobra.Command {
 				}
 			}
 
+			if !cfg.Dataplane.AdminPort.Empty() {
+				// unless a user has explicitly opted out of Envoy Admin API, pick a free port from the range
+				adminPort, err := util_net.PickTCPPort("127.0.0.1", cfg.Dataplane.AdminPort.Lowest(), cfg.Dataplane.AdminPort.Highest())
+				if err != nil {
+					return errors.Wrapf(err, "unable to find a free port in the range %q for Envoy Admin API to listen on", cfg.Dataplane.AdminPort)
+				}
+				cfg.Dataplane.AdminPort = config_types.MustExactPort(adminPort)
+				runLog.Info("picked a free port for Envoy Admin API to listen on", "port", cfg.Dataplane.AdminPort)
+			}
+
 			if cfg.DataplaneRuntime.ConfigDir == "" {
 				tmpDir, err := ioutil.TempDir("", "kuma-dp-")
 				if err != nil {
@@ -79,53 +100,35 @@ func newRunCmd() *cobra.Command {
 				runLog.Info("generated Envoy configuration will be stored in a temporary directory", "dir", tmpDir)
 			}
 
-			runLog.Info("starting Dataplane (Envoy) ...")
-
-			dataplane := envoy.New(envoy.Opts{
+			dataplane, err := envoy.New(envoy.Opts{
 				Catalog:   catalog,
 				Config:    cfg,
 				Generator: bootstrapGenerator,
 				Stdout:    cmd.OutOrStdout(),
 				Stderr:    cmd.OutOrStderr(),
 			})
-
-			server := accesslogs.NewAccessLogServer()
-			defer server.Close()
-
-			logServerErr := make(chan error)
-			go func() {
-				defer close(logServerErr)
-				if err := server.Start(cfg.Dataplane); err != nil {
-					runLog.Error(err, "problem running Access Log server")
-					logServerErr <- err
-				}
-				runLog.Info("stopped Access Log server")
-			}()
-
-			dataplaneErr := make(chan error)
-			go func() {
-				defer close(dataplaneErr)
-				if err := dataplane.Run(core.SetupSignalHandler()); err != nil {
-					runLog.Error(err, "problem running Dataplane (Envoy)")
-					dataplaneErr <- err
-				}
-				runLog.Info("stopped Dataplane (Envoy)")
-			}()
-
-			select {
-			case err := <-logServerErr:
-				if err == nil {
-					return errors.New("Access Log server terminated unexpectedly")
-				}
-				return err
-			case err := <-dataplaneErr:
+			if err != nil {
 				return err
 			}
+			server := accesslogs.NewAccessLogServer(cfg.Dataplane)
+
+			componentMgr := component.NewManager()
+			if err := componentMgr.Add(server, dataplane); err != nil {
+				return err
+			}
+
+			runLog.Info("starting Kuma DP", "version", kuma_version.Build.Version)
+			if err := componentMgr.Start(core.SetupSignalHandler()); err != nil {
+				runLog.Error(err, "error while running Kuma DP")
+				return err
+			}
+			runLog.Info("stopping Kuma DP")
+			return nil
 		},
 	}
 
 	cmd.PersistentFlags().StringVar(&cfg.Dataplane.Name, "name", cfg.Dataplane.Name, "Name of the Dataplane")
-	cmd.PersistentFlags().Uint32Var(&cfg.Dataplane.AdminPort, "admin-port", cfg.Dataplane.AdminPort, "Port for Envoy Admin")
+	cmd.PersistentFlags().Var(&cfg.Dataplane.AdminPort, "admin-port", `Port (or range of ports to choose from) for Envoy Admin API to listen on. Empty value indicates that Envoy Admin API should not be exposed over TCP. Format: "9901 | 9901-9999 | 9901- | -9901"`)
 	cmd.PersistentFlags().StringVar(&cfg.Dataplane.Mesh, "mesh", cfg.Dataplane.Mesh, "Mesh that Dataplane belongs to")
 	cmd.PersistentFlags().StringVar(&cfg.ControlPlane.ApiServer.URL, "cp-address", cfg.ControlPlane.ApiServer.URL, "URL of the Control Plane API Server")
 	cmd.PersistentFlags().StringVar(&cfg.DataplaneRuntime.BinaryPath, "binary-path", cfg.DataplaneRuntime.BinaryPath, "Binary path of Envoy executable")

@@ -4,11 +4,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/pkg/errors"
+	envoy_xds "github.com/envoyproxy/go-control-plane/pkg/server/v2"
 
+	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/core"
+	"github.com/Kong/kuma/pkg/core/faultinjections"
 	"github.com/Kong/kuma/pkg/core/logs"
 	"github.com/Kong/kuma/pkg/core/permissions"
+	mesh_core "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	core_model "github.com/Kong/kuma/pkg/core/resources/model"
 	core_store "github.com/Kong/kuma/pkg/core/resources/store"
 	core_runtime "github.com/Kong/kuma/pkg/core/runtime"
@@ -20,10 +23,6 @@ import (
 	xds_sync "github.com/Kong/kuma/pkg/xds/sync"
 	xds_template "github.com/Kong/kuma/pkg/xds/template"
 	xds_topology "github.com/Kong/kuma/pkg/xds/topology"
-
-	mesh_core "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
-
-	envoy_xds "github.com/envoyproxy/go-control-plane/pkg/server"
 )
 
 var (
@@ -46,16 +45,15 @@ func SetupServer(rt core_runtime.Runtime) error {
 	}
 
 	srv := NewServer(rt.XDS().Cache(), callbacks)
-	return core_runtime.Add(
-		rt,
+	return rt.Add(
 		// xDS gRPC API
-		&grpcServer{srv, rt.Config().XdsServer.GrpcPort},
+		&grpcServer{srv, rt.Config().XdsServer.GrpcPort, rt.Config().XdsServer.TlsCertFile, rt.Config().XdsServer.TlsKeyFile},
 		// diagnostics server
 		&diagnosticsServer{rt.Config().XdsServer.DiagnosticsPort},
 		// bootstrap server
 		&xds_bootstrap.BootstrapServer{
 			Port:      rt.Config().BootstrapServer.Port,
-			Generator: xds_bootstrap.NewDefaultBootstrapGenerator(rt.ResourceManager(), rt.Config().BootstrapServer.Params),
+			Generator: xds_bootstrap.NewDefaultBootstrapGenerator(rt.ResourceManager(), rt.Config().BootstrapServer.Params, rt.Config().XdsServer.TlsCertFile),
 		},
 	)
 }
@@ -64,8 +62,8 @@ func DefaultReconciler(rt core_runtime.Runtime) SnapshotReconciler {
 	return &reconciler{
 		&templateSnapshotGenerator{
 			ProxyTemplateResolver: &simpleProxyTemplateResolver{
-				ResourceManager:      rt.ResourceManager(),
-				DefaultProxyTemplate: xds_template.DefaultProxyTemplate,
+				ReadOnlyResourceManager: rt.ReadOnlyResourceManager(),
+				DefaultProxyTemplate:    xds_template.DefaultProxyTemplate,
 			},
 		},
 		&simpleSnapshotCacher{rt.XDS().Hasher(), rt.XDS().Cache()},
@@ -73,8 +71,9 @@ func DefaultReconciler(rt core_runtime.Runtime) SnapshotReconciler {
 }
 
 func DefaultDataplaneSyncTracker(rt core_runtime.Runtime, reconciler SnapshotReconciler, metadataTracker *DataplaneMetadataTracker) (envoy_xds.Callbacks, error) {
-	permissionsMatcher := permissions.TrafficPermissionsMatcher{ResourceManager: rt.ResourceManager()}
-	logsMatcher := logs.TrafficLogsMatcher{ResourceManager: rt.ResourceManager()}
+	permissionsMatcher := permissions.TrafficPermissionsMatcher{ResourceManager: rt.ReadOnlyResourceManager()}
+	logsMatcher := logs.TrafficLogsMatcher{ResourceManager: rt.ReadOnlyResourceManager()}
+	faultInjectionMatcher := faultinjections.FaultInjectionMatcher{ResourceManager: rt.ReadOnlyResourceManager()}
 	envoyCpCtx, err := xds_context.BuildControlPlaneContext(rt.Config())
 	if err != nil {
 		return nil, err
@@ -90,29 +89,26 @@ func DefaultDataplaneSyncTracker(rt core_runtime.Runtime, reconciler SnapshotRec
 				dataplane := &mesh_core.DataplaneResource{}
 				proxyID := xds.FromResourceKey(key)
 
-				if err := rt.ResourceManager().Get(ctx, dataplane, core_store.GetBy(key)); err != nil {
+				if err := rt.ReadOnlyResourceManager().Get(ctx, dataplane, core_store.GetBy(key)); err != nil {
 					if core_store.IsResourceNotFound(err) {
 						return reconciler.Clear(&proxyID)
 					}
 					return err
 				}
 
-				meshList := mesh_core.MeshResourceList{}
-				if err := rt.ResourceManager().List(ctx, &meshList, core_store.ListByMesh(proxyID.Mesh)); err != nil {
+				mesh := &mesh_core.MeshResource{}
+				if err := rt.ReadOnlyResourceManager().Get(ctx, mesh, core_store.GetByKey(proxyID.Mesh, proxyID.Mesh)); err != nil {
 					return err
-				}
-				if len(meshList.Items) != 1 {
-					return errors.Errorf("there should be a mesh of name %s. Found %d meshes of given name", proxyID.Mesh, len(meshList.Items))
 				}
 				envoyCtx := xds_context.Context{
 					ControlPlane: envoyCpCtx,
 					Mesh: xds_context.MeshContext{
-						TlsEnabled: meshList.Items[0].Spec.GetMtls().GetEnabled(),
+						Resource: mesh,
 					},
 				}
 
 				// pick a single the most specific route for each outbound interface
-				routes, err := xds_topology.GetRoutes(ctx, dataplane, rt.ResourceManager())
+				routes, err := xds_topology.GetRoutes(ctx, dataplane, rt.ReadOnlyResourceManager())
 				if err != nil {
 					return err
 				}
@@ -121,9 +117,23 @@ func DefaultDataplaneSyncTracker(rt core_runtime.Runtime, reconciler SnapshotRec
 				destinations := xds_topology.BuildDestinationMap(dataplane, routes)
 
 				// resolve all endpoints that match given selectors
-				outbound, err := xds_topology.GetOutboundTargets(ctx, dataplane, destinations, rt.ResourceManager())
+				outbound, err := xds_topology.GetOutboundTargets(ctx, dataplane, destinations, rt.ReadOnlyResourceManager())
 				if err != nil {
 					return err
+				}
+
+				healthChecks, err := xds_topology.GetHealthChecks(ctx, dataplane, destinations, rt.ReadOnlyResourceManager())
+				if err != nil {
+					return err
+				}
+
+				trafficTrace, err := xds_topology.GetTrafficTrace(ctx, dataplane, rt.ReadOnlyResourceManager())
+				if err != nil {
+					return err
+				}
+				var tracingBackend *mesh_proto.TracingBackend
+				if trafficTrace != nil {
+					tracingBackend = mesh.GetTracingBackend(trafficTrace.Spec.GetConf().GetBackend())
 				}
 
 				matchedPermissions, err := permissionsMatcher.Match(ctx, dataplane)
@@ -136,6 +146,11 @@ func DefaultDataplaneSyncTracker(rt core_runtime.Runtime, reconciler SnapshotRec
 					return err
 				}
 
+				faultInjection, err := faultInjectionMatcher.Match(ctx, dataplane)
+				if err != nil {
+					return err
+				}
+
 				proxy := xds.Proxy{
 					Id:                 proxyID,
 					Dataplane:          dataplane,
@@ -143,8 +158,12 @@ func DefaultDataplaneSyncTracker(rt core_runtime.Runtime, reconciler SnapshotRec
 					TrafficRoutes:      routes,
 					OutboundSelectors:  destinations,
 					OutboundTargets:    outbound,
+					HealthChecks:       healthChecks,
 					Logs:               matchedLogs,
+					TrafficTrace:       trafficTrace,
+					TracingBackend:     tracingBackend,
 					Metadata:           metadataTracker.Metadata(streamId),
+					FaultInjections:    faultInjection,
 				}
 				return reconciler.Reconcile(envoyCtx, &proxy)
 			},

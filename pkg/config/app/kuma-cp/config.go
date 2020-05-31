@@ -3,11 +3,12 @@ package kuma_cp
 import (
 	"github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/config"
+	admin_server "github.com/Kong/kuma/pkg/config/admin-server"
 	api_server "github.com/Kong/kuma/pkg/config/api-server"
 	"github.com/Kong/kuma/pkg/config/core"
-	"github.com/Kong/kuma/pkg/config/core/discovery"
 	"github.com/Kong/kuma/pkg/config/core/resources/store"
 	gui_server "github.com/Kong/kuma/pkg/config/gui-server"
+	"github.com/Kong/kuma/pkg/config/mads"
 	"github.com/Kong/kuma/pkg/config/plugins/runtime"
 	"github.com/Kong/kuma/pkg/config/sds"
 	token_server "github.com/Kong/kuma/pkg/config/token-server"
@@ -50,6 +51,35 @@ func (d *Defaults) Validate() error {
 	return err
 }
 
+type Metrics struct {
+	Dataplane *DataplaneMetrics `yaml:"dataplane"`
+}
+
+func (m *Metrics) Sanitize() {
+}
+
+func (m *Metrics) Validate() error {
+	if err := m.Dataplane.Validate(); err != nil {
+		return errors.Wrap(err, "Dataplane validation failed")
+	}
+	return nil
+}
+
+type DataplaneMetrics struct {
+	Enabled           bool `yaml:"enabled" envconfig:"kuma_metrics_dataplane_enabled"`
+	SubscriptionLimit int  `yaml:"subscriptionLimit" envconfig:"kuma_metrics_dataplane_subscription_limit"`
+}
+
+func (d *DataplaneMetrics) Sanitize() {
+}
+
+func (d *DataplaneMetrics) Validate() error {
+	if d.SubscriptionLimit < 0 {
+		return errors.New("SubscriptionLimit should be positive or equal 0")
+	}
+	return nil
+}
+
 type Reports struct {
 	// If true then usage stats will be reported
 	Enabled bool `yaml:"enabled" envconfig:"kuma_reports_enabled"`
@@ -62,22 +92,26 @@ type Config struct {
 	Environment core.EnvironmentType `yaml:"environment" envconfig:"kuma_environment"`
 	// Resource Store configuration
 	Store *store.StoreConfig `yaml:"store"`
-	// Discovery configuration
-	Discovery *discovery.DiscoveryConfig `yaml:"discovery"`
 	// Configuration of Bootstrap Server, which provides bootstrap config to Dataplanes
 	BootstrapServer *bootstrap.BootstrapServerConfig `yaml:"bootstrapServer"`
 	// Envoy XDS server configuration
 	XdsServer *xds.XdsServerConfig `yaml:"xdsServer"`
 	// Envoy SDS server configuration
 	SdsServer *sds.SdsServerConfig `yaml:"sdsServer"`
-	// Dataplane Token server configuration
+	// Dataplane Token server configuration (DEPRECATED: use adminServer)
 	DataplaneTokenServer *token_server.DataplaneTokenServerConfig `yaml:"dataplaneTokenServer"`
+	// Monitoring Assignment Discovery Service (MADS) server configuration
+	MonitoringAssignmentServer *mads.MonitoringAssignmentServerConfig `yaml:"monitoringAssignmentServer"`
+	// Admin server configuration
+	AdminServer *admin_server.AdminServerConfig `yaml:"adminServer"`
 	// API Server configuration
 	ApiServer *api_server.ApiServerConfig `yaml:"apiServer"`
 	// Environment-specific configuration
 	Runtime *runtime.RuntimeConfig
 	// Default Kuma entities configuration
 	Defaults *Defaults `yaml:"defaults"`
+	// Metrics configuration
+	Metrics *Metrics `yaml:"metrics"`
 	// Reports configuration
 	Reports *Reports `yaml:"reports"`
 	// GUI Server Config
@@ -87,35 +121,41 @@ type Config struct {
 func (c *Config) Sanitize() {
 	c.General.Sanitize()
 	c.Store.Sanitize()
-	c.Discovery.Sanitize()
 	c.BootstrapServer.Sanitize()
 	c.XdsServer.Sanitize()
 	c.SdsServer.Sanitize()
 	c.DataplaneTokenServer.Sanitize()
+	c.MonitoringAssignmentServer.Sanitize()
+	c.AdminServer.Sanitize()
 	c.ApiServer.Sanitize()
 	c.Runtime.Sanitize()
+	c.Metrics.Sanitize()
 	c.Defaults.Sanitize()
 	c.GuiServer.Sanitize()
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Environment:          core.UniversalEnvironment,
-		Store:                store.DefaultStoreConfig(),
-		XdsServer:            xds.DefaultXdsServerConfig(),
-		SdsServer:            sds.DefaultSdsServerConfig(),
-		DataplaneTokenServer: token_server.DefaultDataplaneTokenServerConfig(),
-		ApiServer:            api_server.DefaultApiServerConfig(),
-		BootstrapServer:      bootstrap.DefaultBootstrapServerConfig(),
-		Discovery:            discovery.DefaultDiscoveryConfig(),
-		Runtime:              runtime.DefaultRuntimeConfig(),
+		Environment:                core.UniversalEnvironment,
+		Store:                      store.DefaultStoreConfig(),
+		XdsServer:                  xds.DefaultXdsServerConfig(),
+		SdsServer:                  sds.DefaultSdsServerConfig(),
+		DataplaneTokenServer:       token_server.DefaultDataplaneTokenServerConfig(),
+		MonitoringAssignmentServer: mads.DefaultMonitoringAssignmentServerConfig(),
+		AdminServer:                admin_server.DefaultAdminServerConfig(),
+		ApiServer:                  api_server.DefaultApiServerConfig(),
+		BootstrapServer:            bootstrap.DefaultBootstrapServerConfig(),
+		Runtime:                    runtime.DefaultRuntimeConfig(),
 		Defaults: &Defaults{
 			Mesh: `type: Mesh
 name: default
-mtls:
-  ca: {}
-  enabled: false
 `,
+		},
+		Metrics: &Metrics{
+			Dataplane: &DataplaneMetrics{
+				Enabled:           true,
+				SubscriptionLimit: 10,
+			},
 		},
 		Reports: &Reports{
 			Enabled: true,
@@ -138,6 +178,12 @@ func (c *Config) Validate() error {
 	if err := c.DataplaneTokenServer.Validate(); err != nil {
 		return errors.Wrap(err, "Dataplane Token Server validation failed")
 	}
+	if err := c.MonitoringAssignmentServer.Validate(); err != nil {
+		return errors.Wrap(err, "Monitoring Assignment Server validation failed")
+	}
+	if err := c.AdminServer.Validate(); err != nil {
+		return errors.Wrap(err, "Admin Server validation failed")
+	}
 	if c.Environment != core.KubernetesEnvironment && c.Environment != core.UniversalEnvironment {
 		return errors.Errorf("Environment should be either %s or %s", core.KubernetesEnvironment, core.UniversalEnvironment)
 	}
@@ -147,11 +193,11 @@ func (c *Config) Validate() error {
 	if err := c.ApiServer.Validate(); err != nil {
 		return errors.Wrap(err, "ApiServer validation failed")
 	}
-	if err := c.Discovery.Validate(); err != nil {
-		return errors.Wrap(err, "Discovery validation failed")
-	}
 	if err := c.Runtime.Validate(c.Environment); err != nil {
 		return errors.Wrap(err, "Runtime validation failed")
+	}
+	if err := c.Metrics.Validate(); err != nil {
+		return errors.Wrap(err, "Metrics validation failed")
 	}
 	if err := c.Defaults.Validate(); err != nil {
 		return errors.Wrap(err, "Defaults validation failed")

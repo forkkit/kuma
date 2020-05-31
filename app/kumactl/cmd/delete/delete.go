@@ -3,13 +3,16 @@ package delete
 import (
 	"context"
 
+	"github.com/Kong/kuma/pkg/core/resources/apis/system"
+
+	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
+
 	kumactl_cmd "github.com/Kong/kuma/app/kumactl/pkg/cmd"
 	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	"github.com/Kong/kuma/pkg/core/resources/model"
 	"github.com/Kong/kuma/pkg/core/resources/registry"
 	"github.com/Kong/kuma/pkg/core/resources/store"
-	"github.com/pkg/errors"
-	"github.com/spf13/cobra"
 )
 
 func NewDeleteCmd(pctx *kumactl_cmd.RootContext) *cobra.Command {
@@ -19,10 +22,6 @@ func NewDeleteCmd(pctx *kumactl_cmd.RootContext) *cobra.Command {
 		Long:  `Delete Kuma resources.`,
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			rs, err := pctx.CurrentResourceStore()
-			if err != nil {
-				return err
-			}
 			resourceTypeArg := args[0]
 			name := args[1]
 
@@ -33,6 +32,8 @@ func NewDeleteCmd(pctx *kumactl_cmd.RootContext) *cobra.Command {
 				resourceType = mesh.MeshType
 			case "dataplane":
 				resourceType = mesh.DataplaneType
+			case "healthcheck":
+				resourceType = mesh.HealthCheckType
 			case "proxytemplate":
 				resourceType = mesh.ProxyTemplateType
 			case "traffic-log":
@@ -41,14 +42,31 @@ func NewDeleteCmd(pctx *kumactl_cmd.RootContext) *cobra.Command {
 				resourceType = mesh.TrafficPermissionType
 			case "traffic-route":
 				resourceType = mesh.TrafficRouteType
+			case "traffic-trace":
+				resourceType = mesh.TrafficTraceType
+			case "fault-injection":
+				resourceType = mesh.FaultInjectionType
+			case "secret":
+				resourceType = system.SecretType
 
 			default:
-				return errors.Errorf("unknown TYPE: %s. Allowed values: mesh, dataplane, proxytemplate, traffic-log, traffic-permission, traffic-route", resourceTypeArg)
+				return errors.Errorf("unknown TYPE: %s. Allowed values: mesh, dataplane, healthcheck, proxytemplate, traffic-log, traffic-permission, traffic-route, traffic-trace, fault-injection, secret", resourceTypeArg)
 			}
 
 			currentMesh := pctx.CurrentMesh()
 			if resourceType == mesh.MeshType {
 				currentMesh = name
+			}
+
+			var rs store.ResourceStore
+			var err error
+			if resourceType == system.SecretType { // Secret is exposed via Admin Server. It will be merged into API Server eventually.
+				rs, err = pctx.CurrentAdminResourceStore()
+			} else {
+				rs, err = pctx.CurrentResourceStore()
+			}
+			if err != nil {
+				return err
 			}
 
 			if resource, err = registry.Global().NewObject(resourceType); err != nil {

@@ -2,6 +2,10 @@ package universal_test
 
 import (
 	"context"
+
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
+
 	"github.com/Kong/kuma/api/mesh/v1alpha1"
 	core_mesh "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	"github.com/Kong/kuma/pkg/core/resources/manager"
@@ -12,8 +16,6 @@ import (
 	"github.com/Kong/kuma/pkg/sds/auth/universal"
 	"github.com/Kong/kuma/pkg/sds/server"
 	builtin_issuer "github.com/Kong/kuma/pkg/tokens/builtin/issuer"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Authentication flow", func() {
@@ -34,17 +36,18 @@ var _ = Describe("Authentication flow", func() {
 	It("should correctly authenticate dataplane", func() {
 		// given
 		id := xds.ProxyId{
-			Mesh:      "example",
-			Namespace: "default",
-			Name:      "dp-1",
+			Mesh: "example",
+			Name: "dp-1",
 		}
 
 		dpRes := core_mesh.DataplaneResource{
 			Spec: v1alpha1.Dataplane{
 				Networking: &v1alpha1.Dataplane_Networking{
+					Address: "127.0.0.1",
 					Inbound: []*v1alpha1.Dataplane_Networking_Inbound{
 						{
-							Interface: "127.0.0.1:8080:8081",
+							Port:        8080,
+							ServicePort: 8081,
 							Tags: map[string]string{
 								"service": "web",
 							},
@@ -67,16 +70,15 @@ var _ = Describe("Authentication flow", func() {
 
 		// then
 		Expect(err).ToNot(HaveOccurred())
-		Expect(authIdentity.Service).To(Equal("web"))
+		Expect(authIdentity.Services[0]).To(Equal("web"))
 		Expect(authIdentity.Mesh).To(Equal(id.Mesh))
 	})
 
 	It("should throw an error on invalid token", func() {
 		// when
 		id := xds.ProxyId{
-			Mesh:      "default",
-			Namespace: "default",
-			Name:      "dp1",
+			Mesh: "default",
+			Name: "dp1",
 		}
 		_, err := authenticator.Authenticate(context.Background(), id, "this-is-not-valid-jwt-token")
 
@@ -87,9 +89,8 @@ var _ = Describe("Authentication flow", func() {
 	It("should throw an error on token with different name", func() {
 		// when
 		generateId := xds.ProxyId{
-			Mesh:      "default",
-			Namespace: "default",
-			Name:      "different-name-than-dp1",
+			Mesh: "default",
+			Name: "different-name-than-dp1",
 		}
 		token, err := issuer.Generate(generateId)
 
@@ -98,9 +99,8 @@ var _ = Describe("Authentication flow", func() {
 
 		// when
 		authId := xds.ProxyId{
-			Mesh:      "default",
-			Namespace: "default",
-			Name:      "dp1",
+			Mesh: "default",
+			Name: "dp1",
 		}
 		_, err = authenticator.Authenticate(context.Background(), authId, token)
 
@@ -111,9 +111,8 @@ var _ = Describe("Authentication flow", func() {
 	It("should throw an error on token with different mesh", func() {
 		// when
 		generateId := xds.ProxyId{
-			Mesh:      "different-mesh-than-default",
-			Namespace: "default",
-			Name:      "dp1",
+			Mesh: "different-mesh-than-default",
+			Name: "dp1",
 		}
 		token, err := issuer.Generate(generateId)
 
@@ -122,9 +121,8 @@ var _ = Describe("Authentication flow", func() {
 
 		// when
 		authId := xds.ProxyId{
-			Mesh:      "default",
-			Namespace: "default",
-			Name:      "dp1",
+			Mesh: "default",
+			Name: "dp1",
 		}
 		_, err = authenticator.Authenticate(context.Background(), authId, token)
 
@@ -135,9 +133,8 @@ var _ = Describe("Authentication flow", func() {
 	It("should throw an error when dataplane is not present in CP", func() {
 		// given
 		id := xds.ProxyId{
-			Mesh:      "default",
-			Namespace: "default",
-			Name:      "non-existent-dp",
+			Mesh: "default",
+			Name: "non-existent-dp",
 		}
 
 		// when
@@ -150,6 +147,6 @@ var _ = Describe("Authentication flow", func() {
 		_, err = authenticator.Authenticate(context.Background(), id, token)
 
 		// then
-		Expect(err).To(MatchError(`unable to find Dataplane for proxy {"default" "default" "non-existent-dp"}: Resource not found: type="Dataplane" namespace="default" name="non-existent-dp" mesh="default"`))
+		Expect(err).To(MatchError(`unable to find Dataplane for proxy "default.non-existent-dp": Resource not found: type="Dataplane" name="non-existent-dp" mesh="default"`))
 	})
 })

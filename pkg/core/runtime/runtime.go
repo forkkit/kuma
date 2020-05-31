@@ -3,10 +3,12 @@ package runtime
 import (
 	"context"
 
+	"github.com/Kong/kuma/pkg/core/ca"
+
 	kuma_cp "github.com/Kong/kuma/pkg/config/app/kuma-cp"
-	builtin_ca "github.com/Kong/kuma/pkg/core/ca/builtin"
-	core_discovery "github.com/Kong/kuma/pkg/core/discovery"
 	core_manager "github.com/Kong/kuma/pkg/core/resources/manager"
+	core_store "github.com/Kong/kuma/pkg/core/resources/store"
+	"github.com/Kong/kuma/pkg/core/runtime/component"
 	secret_manager "github.com/Kong/kuma/pkg/core/secrets/manager"
 	core_xds "github.com/Kong/kuma/pkg/core/xds"
 )
@@ -15,7 +17,7 @@ import (
 type Runtime interface {
 	RuntimeInfo
 	RuntimeContext
-	ComponentManager
+	component.Manager
 }
 
 type RuntimeInfo interface {
@@ -24,11 +26,12 @@ type RuntimeInfo interface {
 
 type RuntimeContext interface {
 	Config() kuma_cp.Config
-	DiscoverySources() []core_discovery.DiscoverySource
 	XDS() core_xds.XdsContext
 	ResourceManager() core_manager.ResourceManager
+	ResourceStore() core_store.ResourceStore
+	ReadOnlyResourceManager() core_manager.ReadOnlyResourceManager
 	SecretManager() secret_manager.SecretManager
-	BuiltinCaManager() builtin_ca.BuiltinCaManager
+	CaManagers() ca.Managers
 	Extensions() context.Context
 }
 
@@ -37,7 +40,7 @@ var _ Runtime = &runtime{}
 type runtime struct {
 	RuntimeInfo
 	RuntimeContext
-	ComponentManager
+	component.Manager
 }
 
 var _ RuntimeInfo = &runtimeInfo{}
@@ -55,18 +58,19 @@ var _ RuntimeContext = &runtimeContext{}
 type runtimeContext struct {
 	cfg kuma_cp.Config
 	rm  core_manager.ResourceManager
+	rs  core_store.ResourceStore
+	rom core_manager.ReadOnlyResourceManager
 	sm  secret_manager.SecretManager
-	bcm builtin_ca.BuiltinCaManager
-	dss []core_discovery.DiscoverySource
+	cam ca.Managers
 	xds core_xds.XdsContext
 	ext context.Context
 }
 
+func (rc *runtimeContext) CaManagers() ca.Managers {
+	return rc.cam
+}
 func (rc *runtimeContext) Config() kuma_cp.Config {
 	return rc.cfg
-}
-func (rc *runtimeContext) DiscoverySources() []core_discovery.DiscoverySource {
-	return rc.dss
 }
 func (rc *runtimeContext) XDS() core_xds.XdsContext {
 	return rc.xds
@@ -74,11 +78,14 @@ func (rc *runtimeContext) XDS() core_xds.XdsContext {
 func (rc *runtimeContext) ResourceManager() core_manager.ResourceManager {
 	return rc.rm
 }
+func (rc *runtimeContext) ResourceStore() core_store.ResourceStore {
+	return rc.rs
+}
+func (rc *runtimeContext) ReadOnlyResourceManager() core_manager.ReadOnlyResourceManager {
+	return rc.rom
+}
 func (rc *runtimeContext) SecretManager() secret_manager.SecretManager {
 	return rc.sm
-}
-func (rc *runtimeContext) BuiltinCaManager() builtin_ca.BuiltinCaManager {
-	return rc.bcm
 }
 func (rc *runtimeContext) Extensions() context.Context {
 	return rc.ext

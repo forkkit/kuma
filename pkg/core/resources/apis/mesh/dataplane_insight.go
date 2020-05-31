@@ -48,7 +48,8 @@ func (t *DataplaneInsightResource) Validate() error {
 var _ model.ResourceList = &DataplaneInsightResourceList{}
 
 type DataplaneInsightResourceList struct {
-	Items []*DataplaneInsightResource
+	Items      []*DataplaneInsightResource
+	Pagination model.Pagination
 }
 
 func (l *DataplaneInsightResourceList) GetItems() []model.Resource {
@@ -71,6 +72,10 @@ func (l *DataplaneInsightResourceList) AddItem(r model.Resource) error {
 	} else {
 		return model.ErrorInvalidItemType((*DataplaneInsightResource)(nil), r)
 	}
+}
+
+func (l *DataplaneInsightResourceList) GetPagination() *model.Pagination {
+	return &l.Pagination
 }
 
 func init() {

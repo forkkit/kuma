@@ -3,17 +3,20 @@ package rest
 import (
 	"bytes"
 	"encoding/json"
+	"time"
+
+	"github.com/golang/protobuf/jsonpb"
+	"github.com/pkg/errors"
 
 	"github.com/Kong/kuma/pkg/core/resources/model"
-	"github.com/golang/protobuf/jsonpb"
-
-	"github.com/pkg/errors"
 )
 
 type ResourceMeta struct {
-	Type string `json:"type"`
-	Name string `json:"name"`
-	Mesh string `json:"mesh,omitempty"`
+	Type             string    `json:"type"`
+	Mesh             string    `json:"mesh,omitempty"`
+	Name             string    `json:"name"`
+	CreationTime     time.Time `json:"creationTime"`
+	ModificationTime time.Time `json:"modificationTime"`
 }
 
 type Resource struct {
@@ -22,35 +25,35 @@ type Resource struct {
 }
 
 type ResourceList struct {
+	Total uint32      `json:"total"`
 	Items []*Resource `json:"items"`
+	Next  *string     `json:"next"`
 }
 
 var _ json.Marshaler = &Resource{}
 var _ json.Unmarshaler = &Resource{}
 
 func (r *Resource) MarshalJSON() ([]byte, error) {
-	meta, err := json.Marshal(&r.Meta)
+	var specBytes []byte
+	if r.Spec != nil {
+		var buf bytes.Buffer
+		if err := (&jsonpb.Marshaler{}).Marshal(&buf, r.Spec); err != nil {
+			return nil, err
+		}
+		specBytes = buf.Bytes()
+	}
+
+	metaJSON, err := json.Marshal(r.Meta)
 	if err != nil {
 		return nil, err
 	}
-	if r.Spec == nil {
-		return meta, nil
-	}
 
-	var buf bytes.Buffer
-	if err := (&jsonpb.Marshaler{}).Marshal(&buf, r.Spec); err != nil {
-		return nil, err
+	if len(specBytes) == 0 || string(specBytes) == "{}" { // spec is nil or empty
+		return metaJSON, nil
+	} else {
+		// remove the } of meta JSON, { of spec JSON and join it by ,
+		return append(append(metaJSON[:len(metaJSON)-1], byte(',')), specBytes[1:]...), nil
 	}
-	spec := buf.Bytes()
-
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(meta, &obj); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(spec, &obj); err != nil {
-		return nil, err
-	}
-	return json.Marshal(obj)
 }
 
 func (r *Resource) UnmarshalJSON(data []byte) error {
@@ -78,12 +81,15 @@ func (rec *ResourceListReceiver) UnmarshalJSON(data []byte) error {
 		return errors.Errorf("NewResource must not be nil")
 	}
 	type List struct {
+		Total uint32             `json:"total"`
 		Items []*json.RawMessage `json:"items"`
+		Next  *string            `json:"next"`
 	}
 	list := List{}
 	if err := json.Unmarshal(data, &list); err != nil {
 		return err
 	}
+	rec.ResourceList.Total = list.Total
 	rec.ResourceList.Items = make([]*Resource, len(list.Items))
 	for i, li := range list.Items {
 		b, err := json.Marshal(li)
@@ -100,5 +106,6 @@ func (rec *ResourceListReceiver) UnmarshalJSON(data []byte) error {
 		}
 		rec.ResourceList.Items[i] = r
 	}
+	rec.ResourceList.Next = list.Next
 	return nil
 }

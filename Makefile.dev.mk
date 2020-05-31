@@ -4,7 +4,7 @@
 		dev/install/ginkgo \
 		dev/install/kubebuilder dev/install/kustomize \
 		dev/install/kubectl dev/install/kind dev/install/minikube \
-		dev/install/golangci-lint
+		dev/install/golangci-lint dev/install/goimports
 
 dev/tools: dev/tools/all ## Bootstrap: Install all development tools
 
@@ -13,7 +13,8 @@ dev/tools/all: dev/install/protoc dev/install/protobuf-wellknown-types \
 	dev/install/ginkgo \
 	dev/install/kubebuilder dev/install/kustomize \
 	dev/install/kubectl dev/install/kind dev/install/minikube \
-	dev/install/golangci-lint
+	dev/install/golangci-lint \
+	dev/install/goimports
 
 dev/install/protoc: ## Bootstrap: Install Protoc (protobuf compiler)
 	@if [ -e $(PROTOC_PATH) ]; then echo "Protoc $$( $(PROTOC_PATH) --version ) is already installed at $(PROTOC_PATH)" ; fi
@@ -44,19 +45,16 @@ dev/install/protobuf-wellknown-types:: ## Bootstrap: Install Protobuf well-known
 		&& echo "Protobuf well-known types $(PROTOC_VERSION) have been installed at $(PROTOBUF_WKT_DIR)" ; fi
 
 dev/install/protoc-gen-go: ## Bootstrap: Install Protoc Go Plugin (protobuf Go generator)
-	go get -u github.com/golang/protobuf/protoc-gen-go@$(GOLANG_PROTOBUF_VERSION)
+	go get github.com/golang/protobuf/protoc-gen-go@$(GOLANG_PROTOBUF_VERSION)
 
 dev/install/protoc-gen-validate: ## Bootstrap: Install Protoc Gen Validate Plugin (protobuf validation code generator)
-	go get -u github.com/envoyproxy/protoc-gen-validate@$(PROTOC_PGV_VERSION)
+	go get github.com/envoyproxy/protoc-gen-validate@$(PROTOC_PGV_VERSION)
 
 dev/install/ginkgo: ## Bootstrap: Install Ginkgo (BDD testing framework)
 	# see https://github.com/onsi/ginkgo#set-me-up
 	echo "Installing Ginkgo ..."
-	go get -u github.com/onsi/ginkgo/ginkgo  # installs the ginkgo CLI
+	go get github.com/onsi/ginkgo/ginkgo@$(GINKGO_VERSION)  # installs the ginkgo CLI
 	echo "Ginkgo has been installed at $(GOPATH_BIN_DIR)/ginkgo"
-	echo "Installing Gomega ..."
-	go get -u github.com/onsi/gomega/... # fetches the matcher library
-	echo "Gomega has been installed"
 
 dev/install/kubebuilder: ## Bootstrap: Install Kubebuilder (including etcd and kube-apiserver)
 	# see https://book.kubebuilder.io/quick-start.html#installation
@@ -128,3 +126,6 @@ dev/install/minikube: ## Bootstrap: Install Minikube
 
 dev/install/golangci-lint: ## Bootstrap: Install golangci-lint
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b $(GOLANGCI_LINT_DIR) $(GOLANGCI_LINT_VERSION)
+
+dev/install/goimports: ## Bootstrap: Install goimports
+	go get golang.org/x/tools/cmd/goimports

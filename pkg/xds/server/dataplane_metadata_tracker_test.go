@@ -1,13 +1,14 @@
 package server_test
 
 import (
-	"github.com/Kong/kuma/pkg/core/xds"
-	"github.com/Kong/kuma/pkg/xds/server"
 	v2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	envoy_core "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	pstruct "github.com/golang/protobuf/ptypes/struct"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+
+	"github.com/Kong/kuma/pkg/core/xds"
+	"github.com/Kong/kuma/pkg/xds/server"
 )
 
 var _ = Describe("Dataplane Metadata Tracker", func() {
@@ -16,7 +17,7 @@ var _ = Describe("Dataplane Metadata Tracker", func() {
 
 	req := v2.DiscoveryRequest{
 		Node: &envoy_core.Node{
-			Id: "default.example.pilot",
+			Id: "default.example",
 			Metadata: &pstruct.Struct{
 				Fields: map[string]*pstruct.Value{
 					"dataplaneTokenPath": &pstruct.Value{
@@ -41,7 +42,7 @@ var _ = Describe("Dataplane Metadata Tracker", func() {
 		metadata := tracker.Metadata(streamId)
 
 		// then
-		Expect(metadata.DataplaneTokenPath).To(Equal("/tmp/token"))
+		Expect(metadata.GetDataplaneTokenPath()).To(Equal("/tmp/token"))
 
 		// when
 		tracker.OnStreamClosed(streamId)
@@ -68,6 +69,6 @@ var _ = Describe("Dataplane Metadata Tracker", func() {
 		metadata := tracker.Metadata(streamId)
 
 		// then
-		Expect(metadata.DataplaneTokenPath).To(Equal("/tmp/token"))
+		Expect(metadata.GetDataplaneTokenPath()).To(Equal("/tmp/token"))
 	})
 })

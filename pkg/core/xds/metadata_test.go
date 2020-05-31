@@ -1,12 +1,12 @@
 package xds_test
 
 import (
-	"github.com/Kong/kuma/pkg/core/xds"
 	envoy_core "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	pstruct "github.com/golang/protobuf/ptypes/struct"
-
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
+
+	"github.com/Kong/kuma/pkg/core/xds"
 )
 
 type testCase struct {
@@ -35,11 +35,17 @@ var _ = DescribeTable("DataplaneMetadataFromNode",
 							StringValue: "/tmp/token",
 						},
 					},
+					"dataplane.admin.port": &pstruct.Value{
+						Kind: &pstruct.Value_StringValue{
+							StringValue: "1234",
+						},
+					},
 				},
 			},
 		},
 		expected: xds.DataplaneMetadata{
 			DataplaneTokenPath: "/tmp/token",
+			AdminPort:          1234,
 		},
 	}),
 )

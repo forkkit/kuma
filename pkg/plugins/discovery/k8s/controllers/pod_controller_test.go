@@ -23,6 +23,7 @@ import (
 	kube_core "k8s.io/api/core/v1"
 	kube_meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kube_intstr "k8s.io/apimachinery/pkg/util/intstr"
+	kube_record "k8s.io/client-go/tools/record"
 
 	mesh_k8s "github.com/Kong/kuma/pkg/plugins/resources/k8s/native/api/v1alpha1"
 )
@@ -81,8 +82,12 @@ var _ = Describe("PodReconciler", func() {
 				ObjectMeta: kube_meta.ObjectMeta{
 					Namespace: "demo",
 					Name:      "example",
+					Annotations: map[string]string{
+						"80.service.kuma.io/protocol": "http",
+					},
 				},
 				Spec: kube_core.ServiceSpec{
+					ClusterIP: "192.168.0.1",
 					Ports: []kube_core.ServicePort{
 						{
 							Port: 80,
@@ -104,9 +109,10 @@ var _ = Describe("PodReconciler", func() {
 			})
 
 		reconciler = &PodReconciler{
-			Client: kubeClient,
-			Scheme: k8sClientScheme,
-			Log:    core.Log.WithName("test"),
+			Client:        kubeClient,
+			EventRecorder: kube_record.NewFakeRecorder(10),
+			Scheme:        k8sClientScheme,
+			Log:           core.Log.WithName("test"),
 		}
 	})
 
@@ -241,15 +247,19 @@ var _ = Describe("PodReconciler", func() {
             kind: Pod
             name: pod-with-kuma-sidecar-and-ip
             uid: ""
+          resourceVersion: "1"
         spec:
           networking:
+            address: 192.168.0.1
             inbound:
-            - interface: 192.168.0.1:8080:8080
+            - port: 8080
               tags:
+                protocol: http
                 service: example.demo.svc:80
-            - interface: 192.168.0.1:6060:6060
+            - port: 6060
               tags:
                 service: example.demo.svc:6061
+                protocol: tcp
 `))
 	})
 
@@ -293,6 +303,8 @@ var _ = Describe("PodReconciler", func() {
 		Expect(err).ToNot(HaveOccurred())
 		// and
 		Expect(actual).To(MatchYAML(`
+        apiVersion: kuma.io/v1alpha1
+        kind: Dataplane
         mesh: poc
         metadata:
           creationTimestamp: null
@@ -305,15 +317,19 @@ var _ = Describe("PodReconciler", func() {
             kind: Pod
             name: pod-with-kuma-sidecar-and-ip
             uid: ""
+          resourceVersion: "2"
         spec:
           networking:
+            address: 192.168.0.1
             inbound:
-            - interface: 192.168.0.1:8080:8080
+            - port: 8080
               tags:
+                protocol: http
                 service: example.demo.svc:80
-            - interface: 192.168.0.1:6060:6060
+            - port: 6060
               tags:
                 service: example.demo.svc:6061
+                protocol: tcp
 `))
 	})
 })

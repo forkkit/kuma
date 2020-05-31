@@ -1,11 +1,14 @@
 package resources
 
 import (
-	util_http "github.com/Kong/kuma/pkg/util/http"
-	"github.com/pkg/errors"
+	"crypto/tls"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/pkg/errors"
+
+	util_http "github.com/Kong/kuma/pkg/util/http"
 )
 
 const (
@@ -19,7 +22,8 @@ func apiServerClient(apiUrl string) (util_http.Client, error) {
 		return nil, errors.Wrapf(err, "Failed to parse API Server URL")
 	}
 	client := &http.Client{
-		Timeout: Timeout,
+		Timeout:   Timeout,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 	}
 	return util_http.ClientWithBaseURL(client, baseURL), nil
 }

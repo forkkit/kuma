@@ -48,8 +48,9 @@ var _ = Describe("Validation", func() {
 		err = types.RegisterType(&sample_core.TrafficRouteResource{})
 		Expect(err).ToNot(HaveOccurred())
 
-		webhook, err := webhooks.NewValidatingWebhook(converter, types, kubeTypes)
-		Expect(err).ToNot(HaveOccurred())
+		webhook := &admission.Webhook{
+			Handler: webhooks.NewValidatingWebhook(converter, types, kubeTypes),
+		}
 
 		scheme := kube_runtime.NewScheme()
 		Expect(sample_k8s.AddToScheme(scheme)).To(Succeed())
@@ -133,7 +134,7 @@ var _ = Describe("Validation", func() {
 					Allowed: false,
 					Result: &kube_meta.Status{
 						Status:  "Failure",
-						Message: "path: cannot be empty",
+						Message: "spec.path: cannot be empty",
 						Reason:  "Invalid",
 						Details: &kube_meta.StatusDetails{
 							Name: "empty",
@@ -142,7 +143,7 @@ var _ = Describe("Validation", func() {
 								{
 									Type:    "FieldValueInvalid",
 									Message: "cannot be empty",
-									Field:   "path",
+									Field:   "spec.path",
 								},
 							},
 						},

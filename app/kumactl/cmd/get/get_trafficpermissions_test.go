@@ -8,6 +8,12 @@ import (
 	"strings"
 	"time"
 
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/extensions/table"
+	. "github.com/onsi/gomega"
+	gomega_types "github.com/onsi/gomega/types"
+	"github.com/spf13/cobra"
+
 	"github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/app/kumactl/cmd"
 	kumactl_cmd "github.com/Kong/kuma/app/kumactl/pkg/cmd"
@@ -17,11 +23,6 @@ import (
 	core_store "github.com/Kong/kuma/pkg/core/resources/store"
 	memory_resources "github.com/Kong/kuma/pkg/plugins/resources/memory"
 	test_model "github.com/Kong/kuma/pkg/test/resources/model"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/ginkgo/extensions/table"
-	. "github.com/onsi/gomega"
-	gomega_types "github.com/onsi/gomega/types"
-	"github.com/spf13/cobra"
 )
 
 var _ = Describe("kumactl get traffic-permissions", func() {
@@ -47,9 +48,8 @@ var _ = Describe("kumactl get traffic-permissions", func() {
 				},
 			},
 			Meta: &test_model.ResourceMeta{
-				Mesh:      "default",
-				Name:      "web1-to-backend1",
-				Namespace: "",
+				Mesh: "default",
+				Name: "web1-to-backend1",
 			},
 		},
 		{
@@ -72,9 +72,8 @@ var _ = Describe("kumactl get traffic-permissions", func() {
 				},
 			},
 			Meta: &test_model.ResourceMeta{
-				Mesh:      "default",
-				Name:      "web2-to-backend2",
-				Namespace: "",
+				Mesh: "default",
+				Name: "web2-to-backend2",
 			},
 		},
 	}
@@ -85,12 +84,12 @@ var _ = Describe("kumactl get traffic-permissions", func() {
 		var rootCmd *cobra.Command
 		var buf *bytes.Buffer
 		var store core_store.ResourceStore
-
+		rootTime, _ := time.Parse(time.RFC3339, "2008-04-27T16:05:36.995Z")
 		BeforeEach(func() {
 			// setup
 			rootCtx = &kumactl_cmd.RootContext{
 				Runtime: kumactl_cmd.RootRuntime{
-					Now: time.Now,
+					Now: func() time.Time { return rootTime },
 					NewResourceStore: func(*config_proto.ControlPlaneCoordinates_ApiServer) (core_store.ResourceStore, error) {
 						return store, nil
 					},
@@ -111,6 +110,7 @@ var _ = Describe("kumactl get traffic-permissions", func() {
 
 		type testCase struct {
 			outputFormat string
+			pagination   string
 			goldenFile   string
 			matcher      func(interface{}) gomega_types.GomegaMatcher
 		}
@@ -120,7 +120,7 @@ var _ = Describe("kumactl get traffic-permissions", func() {
 				// given
 				rootCmd.SetArgs(append([]string{
 					"--config-file", filepath.Join("..", "testdata", "sample-kumactl.config.yaml"),
-					"get", "traffic-permissions"}, given.outputFormat))
+					"get", "traffic-permissions"}, given.outputFormat, given.pagination))
 
 				// when
 				err := rootCmd.Execute()
@@ -144,6 +144,14 @@ var _ = Describe("kumactl get traffic-permissions", func() {
 			Entry("should support Table output explicitly", testCase{
 				outputFormat: "-otable",
 				goldenFile:   "get-traffic-permissions.golden.txt",
+				matcher: func(expected interface{}) gomega_types.GomegaMatcher {
+					return WithTransform(strings.TrimSpace, Equal(strings.TrimSpace(string(expected.([]byte)))))
+				},
+			}),
+			Entry("should support pagination", testCase{
+				outputFormat: "-otable",
+				pagination:   "--size=1",
+				goldenFile:   "get-traffic-permissions.pagination.golden.txt",
 				matcher: func(expected interface{}) gomega_types.GomegaMatcher {
 					return WithTransform(strings.TrimSpace, Equal(strings.TrimSpace(string(expected.([]byte)))))
 				},

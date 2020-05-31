@@ -1,10 +1,13 @@
 package bootstrap
 
 import (
+	"github.com/pkg/errors"
+
 	kuma_cp "github.com/Kong/kuma/pkg/config/app/kuma-cp"
 	config_core "github.com/Kong/kuma/pkg/config/core"
 	"github.com/Kong/kuma/pkg/config/core/resources/store"
-	builtin_ca "github.com/Kong/kuma/pkg/core/ca/builtin"
+	"github.com/Kong/kuma/pkg/core/datasource"
+	"github.com/Kong/kuma/pkg/core/managers/apis/dataplaneinsight"
 	mesh_managers "github.com/Kong/kuma/pkg/core/managers/apis/mesh"
 	core_plugins "github.com/Kong/kuma/pkg/core/plugins"
 	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
@@ -12,12 +15,12 @@ import (
 	core_model "github.com/Kong/kuma/pkg/core/resources/model"
 	"github.com/Kong/kuma/pkg/core/resources/registry"
 	core_runtime "github.com/Kong/kuma/pkg/core/runtime"
+	"github.com/Kong/kuma/pkg/core/runtime/component"
 	runtime_reports "github.com/Kong/kuma/pkg/core/runtime/reports"
 	secret_cipher "github.com/Kong/kuma/pkg/core/secrets/cipher"
 	secret_manager "github.com/Kong/kuma/pkg/core/secrets/manager"
 	core_xds "github.com/Kong/kuma/pkg/core/xds"
 	builtin_issuer "github.com/Kong/kuma/pkg/tokens/builtin/issuer"
-	"github.com/pkg/errors"
 )
 
 func buildRuntime(cfg kuma_cp.Config) (core_runtime.Runtime, error) {
@@ -38,9 +41,13 @@ func buildRuntime(cfg kuma_cp.Config) (core_runtime.Runtime, error) {
 		return nil, err
 	}
 
-	initializeBuiltinCaManager(builder)
-
 	initializeResourceManager(builder)
+
+	builder.WithDataSourceLoader(datasource.NewDataSourceLoader(builder.SecretManager()))
+
+	if err := initializeCaManagers(builder); err != nil {
+		return nil, err
+	}
 
 	initializeXds(builder)
 
@@ -97,14 +104,14 @@ func createDefaultMesh(runtime core_runtime.Runtime) error {
 		// default Mesh on Kubernetes is managed by a Controller
 		return nil
 	case config_core.UniversalEnvironment:
-		return mesh_managers.CreateDefaultMesh(runtime.ResourceManager(), runtime.Config().Defaults.MeshProto(), core_model.DefaultNamespace)
+		return mesh_managers.CreateDefaultMesh(runtime.ResourceManager(), runtime.Config().Defaults.MeshProto())
 	default:
 		return errors.Errorf("unknown environment type %s", env)
 	}
 }
 
 func startReporter(runtime core_runtime.Runtime) error {
-	return runtime.Add(core_runtime.ComponentFunc(func(stop <-chan struct{}) error {
+	return runtime.Add(component.ComponentFunc(func(stop <-chan struct{}) error {
 		runtime_reports.Init(runtime, runtime.Config())
 		<-stop
 		return nil
@@ -180,7 +187,8 @@ func initializeSecretManager(cfg kuma_cp.Config, builder *core_runtime.Builder) 
 	if secretStore, err := plugin.NewSecretStore(builder, pluginConfig); err != nil {
 		return err
 	} else {
-		builder.WithSecretManager(secret_manager.NewSecretManager(secretStore, cipher))
+		validator := secret_manager.NewSecretValidator(builder.CaManagers(), builder.ResourceStore())
+		builder.WithSecretManager(secret_manager.NewSecretManager(secretStore, cipher, validator))
 		return nil
 	}
 }
@@ -193,8 +201,8 @@ func initializeDiscovery(cfg kuma_cp.Config, builder *core_runtime.Builder) erro
 		pluginName = core_plugins.Kubernetes
 		pluginConfig = nil
 	case config_core.UniversalEnvironment:
-		pluginName = core_plugins.Universal
-		pluginConfig = cfg.Discovery.Universal
+		// there is no discovery mechanism for Universal. Dataplanes are applied via API
+		return nil
 	default:
 		return errors.Errorf("unknown environment type %s", cfg.Environment)
 	}
@@ -202,10 +210,8 @@ func initializeDiscovery(cfg kuma_cp.Config, builder *core_runtime.Builder) erro
 	if err != nil {
 		return err
 	}
-	if source, err := plugin.NewDiscoverySource(builder, pluginConfig); err != nil {
+	if err := plugin.StartDiscovering(builder, pluginConfig); err != nil {
 		return err
-	} else {
-		builder.AddDiscoverySource(source)
 	}
 	return nil
 }
@@ -214,17 +220,38 @@ func initializeXds(builder *core_runtime.Builder) {
 	builder.WithXdsContext(core_xds.NewXdsContext())
 }
 
-func initializeBuiltinCaManager(builder *core_runtime.Builder) {
-	builder.WithBuiltinCaManager(builtin_ca.NewBuiltinCaManager(builder.SecretManager()))
+func initializeCaManagers(builder *core_runtime.Builder) error {
+	for pluginName, caPlugin := range core_plugins.Plugins().CaPlugins() {
+		caManager, err := caPlugin.NewCaManager(builder, nil)
+		if err != nil {
+			return errors.Wrapf(err, "could not create CA manager for plugin %q", pluginName)
+		}
+		builder.WithCaManager(string(pluginName), caManager)
+	}
+	return nil
 }
 
 func initializeResourceManager(builder *core_runtime.Builder) {
 	defaultManager := core_manager.NewResourceManager(builder.ResourceStore())
 	customManagers := map[core_model.ResourceType]core_manager.ResourceManager{}
 	customizableManager := core_manager.NewCustomizableResourceManager(defaultManager, customManagers)
-	meshManager := mesh_managers.NewMeshManager(builder.ResourceStore(), builder.BuiltinCaManager(), customizableManager, builder.SecretManager(), registry.Global())
+
+	validator := mesh_managers.MeshValidator{
+		CaManagers: builder.CaManagers(),
+	}
+	meshManager := mesh_managers.NewMeshManager(builder.ResourceStore(), customizableManager, builder.SecretManager(), builder.CaManagers(), registry.Global(), validator)
 	customManagers[mesh.MeshType] = meshManager
+
+	dpInsightManager := dataplaneinsight.NewDataplaneInsightManager(builder.ResourceStore(), builder.Config().Metrics.Dataplane)
+	customManagers[mesh.DataplaneInsightType] = dpInsightManager
+
 	builder.WithResourceManager(customizableManager)
+
+	if builder.Config().Store.Cache.Enabled {
+		builder.WithReadOnlyResourceManager(core_manager.NewCachedManager(customizableManager, builder.Config().Store.Cache.ExpirationTime))
+	} else {
+		builder.WithReadOnlyResourceManager(customizableManager)
+	}
 }
 
 func customizeRuntime(rt core_runtime.Runtime) error {

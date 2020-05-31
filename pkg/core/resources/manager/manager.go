@@ -3,18 +3,25 @@ package manager
 import (
 	"context"
 	"fmt"
-	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
+	"time"
+
+	"github.com/Kong/kuma/pkg/core"
+	core_mesh "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	"github.com/Kong/kuma/pkg/core/resources/model"
 	"github.com/Kong/kuma/pkg/core/resources/store"
 )
 
+type ReadOnlyResourceManager interface {
+	Get(context.Context, model.Resource, ...store.GetOptionsFunc) error
+	List(context.Context, model.ResourceList, ...store.ListOptionsFunc) error
+}
+
 type ResourceManager interface {
+	ReadOnlyResourceManager
 	Create(context.Context, model.Resource, ...store.CreateOptionsFunc) error
 	Update(context.Context, model.Resource, ...store.UpdateOptionsFunc) error
 	Delete(context.Context, model.Resource, ...store.DeleteOptionsFunc) error
 	DeleteAll(context.Context, model.ResourceList, ...store.DeleteAllOptionsFunc) error
-	Get(context.Context, model.Resource, ...store.GetOptionsFunc) error
-	List(context.Context, model.ResourceList, ...store.ListOptionsFunc) error
 }
 
 func NewResourceManager(store store.ResourceStore) ResourceManager {
@@ -42,23 +49,16 @@ func (r *resourcesManager) Create(ctx context.Context, resource model.Resource, 
 		return err
 	}
 	opts := store.NewCreateOptions(fs...)
-	if resource.GetType() != mesh.MeshType {
-		if err := r.ensureMeshExists(ctx, opts.Mesh); err != nil {
-			return err
+
+	var owner model.Resource
+	if resource.GetType() != core_mesh.MeshType {
+		owner = &core_mesh.MeshResource{}
+		if err := r.Store.Get(ctx, owner, store.GetByKey(opts.Mesh, opts.Mesh)); err != nil {
+			return MeshNotFound(opts.Mesh)
 		}
 	}
-	return r.Store.Create(ctx, resource, fs...)
-}
 
-func (r *resourcesManager) ensureMeshExists(ctx context.Context, meshName string) error {
-	list := mesh.MeshResourceList{}
-	if err := r.Store.List(ctx, &list, store.ListByMesh(meshName)); err != nil {
-		return err
-	}
-	if len(list.Items) != 1 {
-		return MeshNotFound(meshName)
-	}
-	return nil
+	return r.Store.Create(ctx, resource, append(fs, store.CreatedAt(core.Now()), store.CreateWithOwner(owner))...)
 }
 
 func (r *resourcesManager) Delete(ctx context.Context, resource model.Resource, fs ...store.DeleteOptionsFunc) error {
@@ -86,7 +86,7 @@ func (r *resourcesManager) Update(ctx context.Context, resource model.Resource, 
 	if err := resource.Validate(); err != nil {
 		return err
 	}
-	return r.Store.Update(ctx, resource, fs...)
+	return r.Store.Update(ctx, resource, append(fs, store.ModifiedAt(time.Now()))...)
 }
 
 type MeshNotFoundError struct {

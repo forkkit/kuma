@@ -1,10 +1,11 @@
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/plugins/resources/k8s/native/pkg/model"
 	"github.com/Kong/kuma/pkg/plugins/resources/k8s/native/pkg/registry"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func (tp *TrafficPermission) GetObjectMeta() *metav1.ObjectMeta {
@@ -29,6 +30,10 @@ func (tp *TrafficPermission) GetSpec() map[string]interface{} {
 
 func (tp *TrafficPermission) SetSpec(spec map[string]interface{}) {
 	tp.Spec = spec
+}
+
+func (tp *TrafficPermission) Scope() model.Scope {
+	return model.ScopeNamespace
 }
 
 func (l *TrafficPermissionList) GetItems() []model.KubernetesObject {

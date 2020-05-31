@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	envoy "github.com/envoyproxy/go-control-plane/envoy/api/v2"
+	envoy_auth "github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
+	envoy_types "github.com/envoyproxy/go-control-plane/pkg/cache/types"
+	envoy_cache "github.com/envoyproxy/go-control-plane/pkg/cache/v2"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -12,9 +16,6 @@ import (
 	xds_model "github.com/Kong/kuma/pkg/core/xds"
 	test_model "github.com/Kong/kuma/pkg/test/resources/model"
 	xds_context "github.com/Kong/kuma/pkg/xds/context"
-	envoy "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoy_auth "github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
-	envoy_cache "github.com/envoyproxy/go-control-plane/pkg/cache"
 )
 
 var _ = Describe("Reconcile", func() {
@@ -45,29 +46,31 @@ var _ = Describe("Reconcile", func() {
 		})
 
 		snapshot := envoy_cache.Snapshot{
-			Listeners: envoy_cache.Resources{
-				Items: map[string]envoy_cache.Resource{
-					"listener": &envoy.Listener{},
+			Resources: [envoy_types.UnknownType]envoy_cache.Resources{
+				envoy_types.Listener: {
+					Items: map[string]envoy_types.Resource{
+						"listener": &envoy.Listener{},
+					},
 				},
-			},
-			Routes: envoy_cache.Resources{
-				Items: map[string]envoy_cache.Resource{
-					"route": &envoy.RouteConfiguration{},
+				envoy_types.Route: {
+					Items: map[string]envoy_types.Resource{
+						"route": &envoy.RouteConfiguration{},
+					},
 				},
-			},
-			Clusters: envoy_cache.Resources{
-				Items: map[string]envoy_cache.Resource{
-					"cluster": &envoy.Cluster{},
+				envoy_types.Cluster: {
+					Items: map[string]envoy_types.Resource{
+						"cluster": &envoy.Cluster{},
+					},
 				},
-			},
-			Endpoints: envoy_cache.Resources{
-				Items: map[string]envoy_cache.Resource{
-					"endpoint": &envoy.ClusterLoadAssignment{},
+				envoy_types.Endpoint: {
+					Items: map[string]envoy_types.Resource{
+						"endpoint": &envoy.ClusterLoadAssignment{},
+					},
 				},
-			},
-			Secrets: envoy_cache.Resources{
-				Items: map[string]envoy_cache.Resource{
-					"secret": &envoy_auth.Secret{},
+				envoy_types.Secret: {
+					Items: map[string]envoy_types.Resource{
+						"secret": &envoy_auth.Secret{},
+					},
 				},
 			},
 		}
@@ -90,10 +93,9 @@ var _ = Describe("Reconcile", func() {
 			// given
 			dataplane := &mesh_core.DataplaneResource{
 				Meta: &test_model.ResourceMeta{
-					Mesh:      "pilot",
-					Namespace: "example",
-					Name:      "demo",
-					Version:   "abcdefg",
+					Mesh:    "demo",
+					Name:    "example",
+					Version: "abcdefg",
 				},
 			}
 
@@ -101,9 +103,8 @@ var _ = Describe("Reconcile", func() {
 			// when
 			proxy := &xds_model.Proxy{
 				Id: xds_model.ProxyId{
-					Mesh:      "pilot",
-					Namespace: "example",
-					Name:      "demo",
+					Mesh: "demo",
+					Name: "example",
 				},
 				Dataplane: dataplane,
 			}
@@ -113,16 +114,16 @@ var _ = Describe("Reconcile", func() {
 
 			By("verifying that snapshot versions were auto-generated")
 			// when
-			snapshot, err := xdsContext.Cache().GetSnapshot("pilot.demo.example")
+			snapshot, err := xdsContext.Cache().GetSnapshot("demo.example")
 			// then
 			Expect(err).ToNot(HaveOccurred())
 			Expect(snapshot).ToNot(BeZero())
 			// and
-			Expect(snapshot.Listeners.Version).To(Equal("v1"))
-			Expect(snapshot.Routes.Version).To(Equal("v2"))
-			Expect(snapshot.Clusters.Version).To(Equal("v3"))
-			Expect(snapshot.Endpoints.Version).To(Equal("v4"))
-			Expect(snapshot.Secrets.Version).To(Equal("v5"))
+			Expect(snapshot.Resources[envoy_types.Listener].Version).To(Equal("v1"))
+			Expect(snapshot.Resources[envoy_types.Route].Version).To(Equal("v2"))
+			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(Equal("v3"))
+			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(Equal("v4"))
+			Expect(snapshot.Resources[envoy_types.Secret].Version).To(Equal("v5"))
 
 			By("simulating discovery event (Dataplane watchdog triggers refresh)")
 			// when
@@ -132,16 +133,16 @@ var _ = Describe("Reconcile", func() {
 
 			By("verifying that snapshot versions remain the same")
 			// when
-			snapshot, err = xdsContext.Cache().GetSnapshot("pilot.demo.example")
+			snapshot, err = xdsContext.Cache().GetSnapshot("demo.example")
 			// then
 			Expect(err).ToNot(HaveOccurred())
 			Expect(snapshot).ToNot(BeZero())
 			// and
-			Expect(snapshot.Listeners.Version).To(Equal("v1"))
-			Expect(snapshot.Routes.Version).To(Equal("v2"))
-			Expect(snapshot.Clusters.Version).To(Equal("v3"))
-			Expect(snapshot.Endpoints.Version).To(Equal("v4"))
-			Expect(snapshot.Secrets.Version).To(Equal("v5"))
+			Expect(snapshot.Resources[envoy_types.Listener].Version).To(Equal("v1"))
+			Expect(snapshot.Resources[envoy_types.Route].Version).To(Equal("v2"))
+			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(Equal("v3"))
+			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(Equal("v4"))
+			Expect(snapshot.Resources[envoy_types.Secret].Version).To(Equal("v5"))
 
 			By("simulating discovery event (Dataplane gets changed)")
 			// when
@@ -151,16 +152,16 @@ var _ = Describe("Reconcile", func() {
 
 			By("verifying that snapshot versions are new")
 			// when
-			snapshot, err = xdsContext.Cache().GetSnapshot("pilot.demo.example")
+			snapshot, err = xdsContext.Cache().GetSnapshot("demo.example")
 			// then
 			Expect(err).ToNot(HaveOccurred())
 			Expect(snapshot).ToNot(BeZero())
 			// and
-			Expect(snapshot.Listeners.Version).To(Equal("v6"))
-			Expect(snapshot.Routes.Version).To(Equal("v7"))
-			Expect(snapshot.Clusters.Version).To(Equal("v8"))
-			Expect(snapshot.Endpoints.Version).To(Equal("v9"))
-			Expect(snapshot.Secrets.Version).To(Equal("v10"))
+			Expect(snapshot.Resources[envoy_types.Listener].Version).To(Equal("v6"))
+			Expect(snapshot.Resources[envoy_types.Route].Version).To(Equal("v7"))
+			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(Equal("v8"))
+			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(Equal("v9"))
+			Expect(snapshot.Resources[envoy_types.Secret].Version).To(Equal("v10"))
 		})
 	})
 })

@@ -2,10 +2,11 @@ package mesh
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/Kong/kuma/api/mesh/v1alpha1"
 	"github.com/Kong/kuma/pkg/core/validators"
 	"github.com/Kong/kuma/pkg/util/envoy"
-	"strings"
 )
 
 var availableProfiles map[string]bool
@@ -68,5 +69,10 @@ func validateResources(resources []*v1alpha1.ProxyTemplateRawResource) validator
 }
 
 func validateSelectors(selectors []*v1alpha1.Selector) validators.ValidationError {
-	return ValidateSelectors(validators.RootedAt("selectors"), selectors, ValidateSelectorsOpts{})
+	return ValidateSelectors(validators.RootedAt("selectors"), selectors, ValidateSelectorsOpts{
+		ValidateSelectorOpts: ValidateSelectorOpts{
+			RequireService:       true,
+			RequireAtLeastOneTag: true,
+		},
+	})
 }

@@ -2,12 +2,11 @@ package mesh
 
 import (
 	"context"
+	"time"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
-	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
-	builtin_ca "github.com/Kong/kuma/pkg/core/ca/builtin"
+	core_ca "github.com/Kong/kuma/pkg/core/ca"
 	core_mesh "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	core_manager "github.com/Kong/kuma/pkg/core/resources/manager"
 	core_model "github.com/Kong/kuma/pkg/core/resources/model"
@@ -18,26 +17,29 @@ import (
 
 func NewMeshManager(
 	store core_store.ResourceStore,
-	builtinCaManager builtin_ca.BuiltinCaManager,
 	otherManagers core_manager.ResourceManager,
 	secretManager secrets_manager.SecretManager,
+	caManagers core_ca.Managers,
 	registry core_registry.TypeRegistry,
+	validator MeshValidator,
 ) core_manager.ResourceManager {
 	return &meshManager{
-		store:            store,
-		builtinCaManager: builtinCaManager,
-		otherManagers:    otherManagers,
-		secretManager:    secretManager,
-		registry:         registry,
+		store:         store,
+		otherManagers: otherManagers,
+		secretManager: secretManager,
+		caManagers:    caManagers,
+		registry:      registry,
+		meshValidator: validator,
 	}
 }
 
 type meshManager struct {
-	store            core_store.ResourceStore
-	builtinCaManager builtin_ca.BuiltinCaManager
-	otherManagers    core_manager.ResourceManager
-	secretManager    secrets_manager.SecretManager
-	registry         core_registry.TypeRegistry
+	store         core_store.ResourceStore
+	otherManagers core_manager.ResourceManager
+	secretManager secrets_manager.SecretManager
+	caManagers    core_ca.Managers
+	registry      core_registry.TypeRegistry
+	meshValidator MeshValidator
 }
 
 func (m *meshManager) Get(ctx context.Context, resource core_model.Resource, fs ...core_store.GetOptionsFunc) error {
@@ -57,35 +59,26 @@ func (m *meshManager) List(ctx context.Context, list core_model.ResourceList, fs
 }
 
 func (m *meshManager) Create(ctx context.Context, resource core_model.Resource, fs ...core_store.CreateOptionsFunc) (errs error) {
+	opts := core_store.NewCreateOptions(fs...)
 	mesh, err := m.mesh(resource)
 	if err != nil {
 		return err
 	}
-	// apply defaults, e.g. Builtin CA
-	mesh.Default()
+	if err := mesh.Default(); err != nil {
+		return err
+	}
 	if err := resource.Validate(); err != nil {
 		return err
 	}
-	// keep creation of Mesh and Built-in CA in sync
-	var rollback func() error
-	defer func() {
-		if errs != nil && rollback != nil {
-			errs = multierr.Append(errs, rollback())
-		}
-	}()
-	// create Built-in CA
-	switch mesh.Spec.GetMtls().GetCa().GetType().(type) {
-	case *mesh_proto.CertificateAuthority_Builtin_:
-		opts := core_store.NewCreateOptions(fs...)
-		if err := m.builtinCaManager.Create(ctx, opts.Name); err != nil {
-			return errors.Wrapf(err, "failed to create Builtin CA for a given mesh")
-		}
-		rollback = func() error {
-			return m.builtinCaManager.Delete(ctx, opts.Name)
-		}
+	if err := m.meshValidator.ValidateCreate(ctx, opts.Name, mesh); err != nil {
+		return err
 	}
+	if err := EnsureEnabledCA(ctx, m.caManagers, mesh, opts.Name); err != nil {
+		return err
+	}
+
 	// persist Mesh
-	if err := m.store.Create(ctx, mesh, fs...); err != nil {
+	if err := m.store.Create(ctx, mesh, append(fs, core_store.CreatedAt(time.Now()))...); err != nil {
 		return err
 	}
 	return nil
@@ -96,8 +89,8 @@ func (m *meshManager) Delete(ctx context.Context, resource core_model.Resource, 
 	if err != nil {
 		return err
 	}
-	// delete Mesh first to avoid a state where a Mesh could exist without a Built-in CA.
-	// even if removal of Built-in CA fails later on, delete opration can be safely tried again.
+	// delete Mesh first to avoid a state where a Mesh could exist without secrets.
+	// even if removal of secrets fails later on, delete operation can be safely tried again.
 	var notFoundErr error
 	if err := m.store.Delete(ctx, mesh, fs...); err != nil {
 		if core_store.IsResourceNotFound(err) {
@@ -107,24 +100,9 @@ func (m *meshManager) Delete(ctx context.Context, resource core_model.Resource, 
 		}
 	}
 	opts := core_store.NewDeleteOptions(fs...)
-	// delete CA
-	name := core_store.NewDeleteOptions(fs...).Mesh
-	if err := m.builtinCaManager.Delete(ctx, name); err != nil && !core_store.IsResourceNotFound(err) {
-		return errors.Wrapf(err, "failed to delete Builtin CA for a given mesh")
-	}
-	// delete all other secrets
+	// delete all secrets
 	if err := m.secretManager.DeleteAll(ctx, core_store.DeleteAllByMesh(opts.Mesh)); err != nil {
 		return errors.Wrap(err, "could not delete associated secrets")
-	}
-	// delete other resources associated by mesh
-	for _, typ := range m.registry.ListTypes() {
-		list, err := m.registry.NewList(typ)
-		if err != nil {
-			return err
-		}
-		if err := m.otherManagers.DeleteAll(ctx, list, core_store.DeleteAllByMesh(opts.Name)); err != nil {
-			return errors.Wrap(err, "could not delete associated resources")
-		}
 	}
 	return notFoundErr
 }
@@ -141,12 +119,24 @@ func (m *meshManager) Update(ctx context.Context, resource core_model.Resource, 
 	if err != nil {
 		return err
 	}
-	// apply defaults, e.g. Builtin CA
-	mesh.Default()
+	if err := mesh.Default(); err != nil {
+		return err
+	}
 	if err := resource.Validate(); err != nil {
 		return err
 	}
-	return m.store.Update(ctx, mesh, fs...)
+
+	currentMesh := &core_mesh.MeshResource{}
+	if err := m.Get(ctx, currentMesh, core_store.GetBy(core_model.MetaToResourceKey(mesh.GetMeta())), core_store.GetByVersion(mesh.GetMeta().GetVersion())); err != nil {
+		return err
+	}
+	if err := m.meshValidator.ValidateUpdate(ctx, currentMesh, mesh); err != nil {
+		return err
+	}
+	if err := EnsureEnabledCA(ctx, m.caManagers, mesh, mesh.Meta.GetName()); err != nil {
+		return err
+	}
+	return m.store.Update(ctx, mesh, append(fs, core_store.ModifiedAt(time.Now()))...)
 }
 
 func (m *meshManager) mesh(resource core_model.Resource) (*core_mesh.MeshResource, error) {

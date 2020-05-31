@@ -2,25 +2,22 @@ package server_test
 
 import (
 	"context"
-	"github.com/Kong/kuma/pkg/core/xds"
-	xds_context "github.com/Kong/kuma/pkg/xds/context"
 	"time"
 
+	envoy "github.com/envoyproxy/go-control-plane/envoy/api/v2"
+	envoy_core "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-
-	. "github.com/Kong/kuma/pkg/xds/server"
 
 	mesh_proto "github.com/Kong/kuma/api/mesh/v1alpha1"
 	kuma_cp "github.com/Kong/kuma/pkg/config/app/kuma-cp"
 	mesh_core "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	core_model "github.com/Kong/kuma/pkg/core/resources/model"
 	core_store "github.com/Kong/kuma/pkg/core/resources/store"
-
-	envoy "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoy_core "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-
+	"github.com/Kong/kuma/pkg/core/xds"
 	test_runtime "github.com/Kong/kuma/pkg/test/runtime"
+	xds_context "github.com/Kong/kuma/pkg/xds/context"
+	. "github.com/Kong/kuma/pkg/xds/server"
 )
 
 type event struct {
@@ -56,7 +53,7 @@ var _ = Describe("Components", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// and example mesh
-			opts := core_store.CreateByKey("demo", "pilot", "pilot")
+			opts := core_store.CreateByKey("demo", "demo")
 			err = runtime.ResourceManager().Create(context.Background(), &mesh_core.MeshResource{}, opts)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -73,7 +70,7 @@ var _ = Describe("Components", func() {
 			typ := ""
 			req := &envoy.DiscoveryRequest{
 				Node: &envoy_core.Node{
-					Id: "pilot.example.demo",
+					Id: "demo.example",
 				},
 			}
 
@@ -93,16 +90,18 @@ var _ = Describe("Components", func() {
 			// when
 			nextEvent := <-reconciler.events
 			// then
-			Expect(nextEvent.Delete).To(Equal(core_model.ResourceKey{Mesh: "pilot", Namespace: "demo", Name: "example"}))
+			Expect(nextEvent.Delete).To(Equal(core_model.ResourceKey{Mesh: "demo", Name: "example"}))
 
 			By("creating Dataplane definition")
 			// when
 			resource := &mesh_core.DataplaneResource{
 				Spec: mesh_proto.Dataplane{
 					Networking: &mesh_proto.Dataplane_Networking{
+						Address: "127.0.0.1",
 						Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
 							{
-								Interface: "127.0.0.1:9090:8080",
+								Port:        9090,
+								ServicePort: 8080,
 								Tags: map[string]string{
 									"service": "backend",
 								},
@@ -111,7 +110,7 @@ var _ = Describe("Components", func() {
 					},
 				},
 			}
-			err = runtime.ResourceManager().Create(ctx, resource, core_store.CreateBy(core_model.ResourceKey{Mesh: "pilot", Namespace: "demo", Name: "example"}))
+			err = runtime.ResourceManager().Create(ctx, resource, core_store.CreateBy(core_model.ResourceKey{Mesh: "demo", Name: "example"}))
 			// then
 			Expect(err).ToNot(HaveOccurred())
 

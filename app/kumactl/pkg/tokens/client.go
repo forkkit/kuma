@@ -3,21 +3,23 @@ package tokens
 import (
 	"bytes"
 	"encoding/json"
-	kumactl_config "github.com/Kong/kuma/pkg/config/app/kumactl/v1alpha1"
-	"github.com/Kong/kuma/pkg/tokens/builtin/server/types"
-	util_http "github.com/Kong/kuma/pkg/util/http"
-	"github.com/pkg/errors"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/pkg/errors"
+
+	kumactl_config "github.com/Kong/kuma/pkg/config/app/kumactl/v1alpha1"
+	"github.com/Kong/kuma/pkg/tokens/builtin/server/types"
+	util_http "github.com/Kong/kuma/pkg/util/http"
 )
 
 const (
 	timeout = 10 * time.Second
 )
 
-func NewDataplaneTokenClient(address string, config *kumactl_config.Context_DataplaneTokenApiCredentials) (DataplaneTokenClient, error) {
+func NewDataplaneTokenClient(address string, config *kumactl_config.Context_AdminApiCredentials) (DataplaneTokenClient, error) {
 	baseURL, err := url.Parse(address)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse Dataplane Token Server URL")

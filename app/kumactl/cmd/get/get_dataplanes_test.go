@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Kong/kuma/app/kumactl/cmd"
 
@@ -30,27 +31,29 @@ import (
 var _ = Describe("kumactl get dataplanes", func() {
 
 	var dataplanes []*mesh_core.DataplaneResource
-
 	BeforeEach(func() {
+		// setup
 		dataplanes = []*mesh_core.DataplaneResource{
 			{
 				Meta: &test_model.ResourceMeta{
-					Mesh:      "default",
-					Namespace: "trial",
-					Name:      "experiment",
+					Mesh: "default",
+					Name: "experiment",
 				},
 				Spec: mesh_proto.Dataplane{
 					Networking: &mesh_proto.Dataplane_Networking{
+						Address: "127.0.0.1",
 						Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
 							{
-								Interface: "127.0.0.1:8080:80",
+								Port:        8080,
+								ServicePort: 80,
 								Tags: map[string]string{
 									"service": "mobile",
 									"version": "v1",
 								},
 							},
 							{
-								Interface: "127.0.0.1:8090:90",
+								Port:        8090,
+								ServicePort: 90,
 								Tags: map[string]string{
 									"service": "metrics",
 									"version": "v1",
@@ -62,15 +65,16 @@ var _ = Describe("kumactl get dataplanes", func() {
 			},
 			{
 				Meta: &test_model.ResourceMeta{
-					Mesh:      "default",
-					Namespace: "demo",
-					Name:      "example",
+					Mesh: "default",
+					Name: "example",
 				},
 				Spec: mesh_proto.Dataplane{
 					Networking: &mesh_proto.Dataplane_Networking{
+						Address: "127.0.0.2",
 						Inbound: []*mesh_proto.Dataplane_Networking_Inbound{
 							{
-								Interface: "127.0.0.2:8080:80",
+								Port:        8080,
+								ServicePort: 80,
 								Tags: map[string]string{
 									"service": "web",
 									"version": "v2",
@@ -89,12 +93,13 @@ var _ = Describe("kumactl get dataplanes", func() {
 		var rootCmd *cobra.Command
 		var buf *bytes.Buffer
 		var store core_store.ResourceStore
-
+		rootTime, _ := time.Parse(time.RFC3339, "2008-04-27T16:05:36.995Z")
 		BeforeEach(func() {
 			// setup
 
 			rootCtx = &kumactl_cmd.RootContext{
 				Runtime: kumactl_cmd.RootRuntime{
+					Now: func() time.Time { return rootTime },
 					NewResourceStore: func(*config_proto.ControlPlaneCoordinates_ApiServer) (core_store.ResourceStore, error) {
 						return store, nil
 					},
@@ -105,9 +110,8 @@ var _ = Describe("kumactl get dataplanes", func() {
 
 			for _, pt := range dataplanes {
 				key := core_model.ResourceKey{
-					Mesh:      pt.Meta.GetMesh(),
-					Namespace: pt.Meta.GetNamespace(),
-					Name:      pt.Meta.GetName(),
+					Mesh: pt.Meta.GetMesh(),
+					Name: pt.Meta.GetName(),
 				}
 				err := store.Create(context.Background(), pt, core_store.CreateBy(key))
 				Expect(err).ToNot(HaveOccurred())
@@ -120,6 +124,7 @@ var _ = Describe("kumactl get dataplanes", func() {
 
 		type testCase struct {
 			outputFormat string
+			pagination   string
 			goldenFile   string
 			matcher      func(interface{}) gomega_types.GomegaMatcher
 		}
@@ -129,7 +134,7 @@ var _ = Describe("kumactl get dataplanes", func() {
 				// given
 				rootCmd.SetArgs(append([]string{
 					"--config-file", filepath.Join("..", "testdata", "sample-kumactl.config.yaml"),
-					"get", "dataplanes"}, given.outputFormat))
+					"get", "dataplanes"}, given.outputFormat, given.pagination))
 
 				// when
 				err := rootCmd.Execute()
@@ -153,6 +158,14 @@ var _ = Describe("kumactl get dataplanes", func() {
 			Entry("should support Table output explicitly", testCase{
 				outputFormat: "-otable",
 				goldenFile:   "get-dataplanes.golden.txt",
+				matcher: func(expected interface{}) gomega_types.GomegaMatcher {
+					return WithTransform(strings.TrimSpace, Equal(strings.TrimSpace(string(expected.([]byte)))))
+				},
+			}),
+			Entry("should support pagination", testCase{
+				outputFormat: "-otable",
+				goldenFile:   "get-dataplanes.pagination.golden.txt",
+				pagination:   "--size=1",
 				matcher: func(expected interface{}) gomega_types.GomegaMatcher {
 					return WithTransform(strings.TrimSpace, Equal(strings.TrimSpace(string(expected.([]byte)))))
 				},

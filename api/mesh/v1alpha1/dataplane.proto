@@ -4,6 +4,8 @@ package kuma.mesh.v1alpha1;
 
 option go_package = "v1alpha1";
 
+import "mesh/v1alpha1/metrics.proto";
+
 import "validate/validate.proto";
 
 // Dataplane defines configuration of a side-car proxy.
@@ -12,15 +14,35 @@ message Dataplane {
   // Networking describes inbound and outbound interfaces of a dataplane.
   message Networking {
 
+    // Public IP on which the dataplane is accessible in the network.
+    // Host names and DNS are not allowed.
+    string address = 5;
+
     // Inbound describes a service implemented by the dataplane.
     message Inbound {
 
-      // Interface describes networking rules for incoming traffic.
-      // The value is a string formatted as
+      // DEPRECATED: use networking.address, networking.inbound[].port and
+      // networking.inbound[].servicePort Interface describes networking rules
+      // for incoming traffic. The value is a string formatted as
       // <DATAPLANE_IP>:<DATAPLANE_PORT>:<WORKLOAD_PORT>, which means
       // that dataplane must listen on <DATAPLANE_IP>:<DATAPLANE_PORT>
       // and must dispatch to 127.0.0.1:<WORKLOAD_PORT>.
-      string interface = 1 [ (validate.rules).string.min_len = 2 ];
+      //
+      // E.g.,
+      // "192.168.0.100:9090:8080" in case of IPv4 or
+      // "[2001:db8::1]:7070:6060" in case of IPv6.
+      string interface = 1;
+
+      // Port of the inbound interface that will forward requests to the
+      // service.
+      uint32 port = 3;
+
+      // Port of the service that requests will be forwarded to.
+      uint32 servicePort = 4;
+
+      // Address on which inbound listener will be exposed. Defaults to
+      // networking.address.
+      string address = 5;
 
       // Tags associated with an application this dataplane is deployed next to,
       // e.g. service=web, version=1.0.
@@ -31,18 +53,36 @@ message Dataplane {
     // Outbound describes a service consumed by the dataplane.
     message Outbound {
 
+      // DEPRECATED: use networking.address and networking.outbound[].port
       // Interface describes networking rules for outgoing traffic.
-      // The value is a string formatted as <IP_ADDRESS>:<PORT>,
-      // which means that dataplane must listen on <IP_ADDRESS>:<PORT>
-      // and must be dispatch to <SERVICE>:<SERVICE_PORT>.
-      string interface = 1 [ (validate.rules).string.min_len = 2 ];
+      // The value is a string formatted as <DATAPLANE_IP>:<DATAPLANE_PORT>,
+      // which means that dataplane must listen on
+      // <DATAPLANE_IP>:<DATAPLANE_PORT> and must be dispatch to
+      // <SERVICE>:<SERVICE_PORT>.
+      //
+      // E.g.,
+      // "127.0.0.1:9090" in case of IPv4 or
+      // "[::1]:8080" in case of IPv6 or
+      // ":7070".
+      string interface = 1;
+
+      // Address on which the service will be available to this dataplane.
+      // Defaults to 127.0.0.1
+      string address = 3;
+
+      // Port on which the service will be available to this dataplane.
+      uint32 port = 4;
 
       // Service name.
       string service = 2 [ (validate.rules).string.hostname = true ];
+    }
 
-      // Service port.
-      uint32 service_port = 3
-          [ (validate.rules).uint32 = {gte : 1, lte : 65535} ];
+    // Gateway describes a service that ingress should not be proxied.
+    message Gateway {
+      // Tags associated with a gateway (e.g., Kong, Contour, etc) this
+      // dataplane is deployed next to, e.g. service=gateway, env=prod.
+      // `service` tag is mandatory.
+      map<string, string> tags = 1 [ (validate.rules).map.min_pairs = 1 ];
     }
 
     // TransparentProxying describes configuration for transparent proxying.
@@ -52,6 +92,9 @@ message Dataplane {
       uint32 redirect_port = 1 [ (validate.rules).uint32 = {lte : 65535} ];
     }
 
+    // Gateway describes configuration of gateway of the dataplane.
+    Gateway gateway = 3;
+
     // Inbound describes a list of inbound interfaces of the dataplane.
     repeated Inbound inbound = 1;
 
@@ -59,9 +102,16 @@ message Dataplane {
     repeated Outbound outbound = 2;
 
     // TransparentProxying describes configuration for transparent proxying.
-    TransparentProxying transparent_proxying = 3;
+    TransparentProxying transparent_proxying = 4;
   }
 
   // Networking describes inbound and outbound interfaces of the dataplane.
   Networking networking = 1;
+
+  // Configuration for metrics that should be collected and exposed by the
+  // dataplane.
+  //
+  // Settings defined here will override their respective defaults
+  // defined at a Mesh level.
+  MetricsBackend metrics = 2;
 }

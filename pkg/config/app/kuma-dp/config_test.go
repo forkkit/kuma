@@ -12,6 +12,7 @@ import (
 
 	"github.com/Kong/kuma/pkg/config"
 	kuma_dp "github.com/Kong/kuma/pkg/config/app/kuma-dp"
+	config_types "github.com/Kong/kuma/pkg/config/types"
 )
 
 var _ = Describe("Config", func() {
@@ -27,7 +28,7 @@ var _ = Describe("Config", func() {
 
 		// and
 		Expect(cfg.ControlPlane.ApiServer.URL).To(Equal("https://kuma-control-plane.internal:5682"))
-		Expect(cfg.Dataplane.AdminPort).To(Equal(uint32(2345)))
+		Expect(cfg.Dataplane.AdminPort).To(Equal(config_types.MustExactPort(2345)))
 		Expect(cfg.Dataplane.DrainTime).To(Equal(60 * time.Second))
 	})
 
@@ -51,7 +52,7 @@ var _ = Describe("Config", func() {
 			// setup
 			env := map[string]string{
 				"KUMA_CONTROL_PLANE_API_SERVER_URL":  "https://kuma-control-plane.internal:5682",
-				"KUMA_DATAPLANE_MESH":                "pilot",
+				"KUMA_DATAPLANE_MESH":                "demo",
 				"KUMA_DATAPLANE_NAME":                "example",
 				"KUMA_DATAPLANE_ADMIN_PORT":          "2345",
 				"KUMA_DATAPLANE_DRAIN_TIME":          "60s",
@@ -74,9 +75,9 @@ var _ = Describe("Config", func() {
 
 			// and
 			Expect(cfg.ControlPlane.ApiServer.URL).To(Equal("https://kuma-control-plane.internal:5682"))
-			Expect(cfg.Dataplane.Mesh).To(Equal("pilot"))
+			Expect(cfg.Dataplane.Mesh).To(Equal("demo"))
 			Expect(cfg.Dataplane.Name).To(Equal("example"))
-			Expect(cfg.Dataplane.AdminPort).To(Equal(uint32(2345)))
+			Expect(cfg.Dataplane.AdminPort).To(Equal(config_types.MustExactPort(2345)))
 			Expect(cfg.Dataplane.DrainTime).To(Equal(60 * time.Second))
 			Expect(cfg.DataplaneRuntime.BinaryPath).To(Equal("envoy.sh"))
 			Expect(cfg.DataplaneRuntime.ConfigDir).To(Equal("/var/run/envoy"))
@@ -109,6 +110,6 @@ var _ = Describe("Config", func() {
 		err := config.Load(filepath.Join("testdata", "invalid-config.input.yaml"), &cfg)
 
 		// then
-		Expect(err).To(MatchError(`Invalid configuration: .ControlPlane is not valid: .ApiServer is not valid: .URL must be a valid absolute URI; .Dataplane is not valid: .Mesh must be non-empty; .Name must be non-empty; .AdminPort must be in the range [0, 65535]; .DrainTime must be positive; .DataplaneRuntime is not valid: .BinaryPath must be non-empty`))
+		Expect(err).To(MatchError(`Invalid configuration: .ControlPlane is not valid: .ApiServer is not valid: .URL must be a valid absolute URI; .Dataplane is not valid: .Mesh must be non-empty; .Name must be non-empty; .DrainTime must be positive; .DataplaneRuntime is not valid: .BinaryPath must be non-empty`))
 	})
 })

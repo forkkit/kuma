@@ -1,23 +1,97 @@
 {
+  "total": 2,
   "items": [
     {
+      "metrics": {
+        "enabledBackend": "prometheus-1",
+        "backends": [
+          {
+            "name": "prometheus-1",
+            "type": "prometheus",
+            "conf": {
+              "port": 1234,
+              "path": "/non-standard-path"
+            }
+          },
+          {
+            "name": "prometheus-2",
+            "type": "prometheus",
+            "conf": {
+              "port": 1235,
+              "path": "/non-standard-path"
+            }
+          }
+        ]
+      },
+      "tracing": {
+        "backends": [
+          {
+            "name": "zipkin-us",
+            "type": "zipkin",
+            "conf": {
+              "url": "http://zipkin.us:8080/v1/spans"
+            }
+          },
+          {
+            "name": "zipkin-eu",
+            "type": "zipkin",
+            "conf": {
+              "url": "http://zipkin.eu:8080/v1/spans"
+            }
+          }
+        ]
+      },
+      "logging": {
+        "backends": [
+          {
+            "name": "logstash",
+            "type": "tcp",
+            "conf": {
+              "address": "127.0.0.1:5000"
+            }
+          },
+          {
+            "name": "file",
+            "type": "file",
+            "conf": {
+              "path": "/tmp/service.log"
+            }
+          }
+        ]
+      },
       "mtls": {
-        "enabled": true,
-        "ca": {
-          "builtin": {}
-        }
+        "enabledBackend": "builtin-1",
+        "backends": [
+          {
+            "name": "builtin-1",
+            "type": "builtin"
+          },
+          {
+            "name": "builtin-2",
+            "type": "builtin"
+          }
+        ]
       },
       "name": "mesh1",
-      "type": "Mesh"
+      "type": "Mesh",
+      "creationTime": "0001-01-01T00:00:00Z",
+      "modificationTime": "0001-01-01T00:00:00Z"
     },
     {
-      "mtls": {
-        "ca": {
-          "builtin": {}
-        }
+      "metrics": {
+        "backends": []
+      },
+      "tracing": {
+        "backends": []
+      },
+      "logging": {
+        "backends": []
       },
       "name": "mesh2",
-      "type": "Mesh"
+      "type": "Mesh",
+      "creationTime": "0001-01-01T00:00:00Z",
+      "modificationTime": "0001-01-01T00:00:00Z"
     }
-  ]
+  ],
+  "next": null
 }

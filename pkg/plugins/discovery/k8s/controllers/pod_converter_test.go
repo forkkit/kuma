@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
@@ -15,6 +17,7 @@ import (
 	. "github.com/Kong/kuma/pkg/plugins/discovery/k8s/controllers"
 
 	mesh_k8s "github.com/Kong/kuma/pkg/plugins/resources/k8s/native/api/v1alpha1"
+	util_yaml "github.com/Kong/kuma/pkg/util/yaml"
 
 	kube_core "k8s.io/api/core/v1"
 	kube_meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,314 +28,244 @@ import (
 
 var _ = Describe("PodToDataplane(..)", func() {
 
-	type testCase struct {
-		pod           *kube_core.Pod
-		services      []*kube_core.Service
-		others        []string
-		serviceGetter fakeReader
-		expected      string
-	}
+	pod := `
+    metadata:
+      namespace: demo
+      name: example
+      labels:
+        app: example
+        version: "0.1"
+    spec:
+      containers:
+      - ports: []
+        # when a 'targetPort' in a ServicePort is a number,
+        # it should not be mandatory to list container ports explicitly
+        #
+        # containerPort: 8080
+        # containerPort: 8443
+      - ports:
+        - containerPort: 7070
+        - containerPort: 6060
+          name: metrics
+    status:
+      podIP: 192.168.0.1
+`
 
-	pod := &kube_core.Pod{
-		ObjectMeta: kube_meta.ObjectMeta{
-			Namespace: "demo",
-			Name:      "example",
-			Labels: map[string]string{
-				"app":     "example",
-				"version": "0.1",
-			},
-		},
-		Spec: kube_core.PodSpec{
-			Containers: []kube_core.Container{
-				{
-					Ports: []kube_core.ContainerPort{
-						{ContainerPort: 8080},
-						{ContainerPort: 8443},
-					},
-				},
-				{
-					Ports: []kube_core.ContainerPort{
-						{ContainerPort: 7070},
-						{ContainerPort: 6060, Name: "metrics"},
-					},
-				},
-			},
-		},
-		Status: kube_core.PodStatus{
-			PodIP: "192.168.0.1",
-		},
+	gatewayPod := `
+    metadata:
+      namespace: demo
+      name: example
+      labels:
+        app: example
+        version: "0.1"
+      annotations:
+        kuma.io/gateway: enabled
+    spec:
+      containers:
+      - ports:
+        - containerPort: 7070
+        - containerPort: 6060
+          name: metrics
+    status:
+      podIP: 192.168.0.1
+`
+
+	ParseServices := func(values []string) ([]*kube_core.Service, error) {
+		services := make([]*kube_core.Service, len(values))
+		for i, value := range values {
+			service := kube_core.Service{}
+			if err := yaml.Unmarshal([]byte(value), &service); err != nil {
+				return nil, err
+			}
+			services[i] = &service
+		}
+		return services, nil
 	}
 
 	ParseDataplanes := func(values []string) ([]*mesh_k8s.Dataplane, error) {
-		dataplanes := make([]*mesh_k8s.Dataplane, 0, len(values))
-		for _, value := range values {
-			dataplane := &mesh_k8s.Dataplane{}
-			if err := yaml.Unmarshal([]byte(value), dataplane); err != nil {
+		dataplanes := make([]*mesh_k8s.Dataplane, len(values))
+		for i, value := range values {
+			dataplane := mesh_k8s.Dataplane{}
+			if err := yaml.Unmarshal([]byte(value), &dataplane); err != nil {
 				return nil, err
 			}
-			dataplanes = append(dataplanes, dataplane)
+			dataplanes[i] = &dataplane
 		}
 		return dataplanes, nil
 	}
 
-	DescribeTable("should convert Pod into a Dataplane",
+	type testCase struct {
+		pod             string
+		servicesForPod  string
+		otherDataplanes string
+		otherServices   string
+		dataplane       string
+	}
+	DescribeTable("should convert Pod into a Dataplane YAML version",
 		func(given testCase) {
 			// given
+			// pod
+			pod := &kube_core.Pod{}
+			bytes, err := ioutil.ReadFile(filepath.Join("testdata", given.pod))
+			Expect(err).ToNot(HaveOccurred())
+			err = yaml.Unmarshal(bytes, pod)
+			Expect(err).ToNot(HaveOccurred())
+
+			// services for pod
+			bytes, err = ioutil.ReadFile(filepath.Join("testdata", given.servicesForPod))
+			Expect(err).ToNot(HaveOccurred())
+			YAMLs := util_yaml.SplitYAML(string(bytes))
+			services, err := ParseServices(YAMLs)
+			Expect(err).ToNot(HaveOccurred())
+
+			// other services
+			var serviceGetter kube_client.Reader
+			if given.otherServices != "" {
+				bytes, err = ioutil.ReadFile(filepath.Join("testdata", given.otherServices))
+				Expect(err).ToNot(HaveOccurred())
+				YAMLs := util_yaml.SplitYAML(string(bytes))
+				services, err := ParseServices(YAMLs)
+				Expect(err).ToNot(HaveOccurred())
+				reader, err := newFakeReader(services)
+				Expect(err).ToNot(HaveOccurred())
+				serviceGetter = reader
+			}
+
+			// other dataplanes
+			var otherDataplanes []*mesh_k8s.Dataplane
+			if given.otherDataplanes != "" {
+				bytes, err = ioutil.ReadFile(filepath.Join("testdata", given.otherDataplanes))
+				Expect(err).ToNot(HaveOccurred())
+				YAMLs := util_yaml.SplitYAML(string(bytes))
+				otherDataplanes, err = ParseDataplanes(YAMLs)
+				Expect(err).ToNot(HaveOccurred())
+			}
+
+			converter := PodConverter{
+				ServiceGetter: serviceGetter,
+			}
+
+			// when
 			dataplane := &mesh_k8s.Dataplane{}
+			err = converter.PodToDataplane(dataplane, pod, services, otherDataplanes)
 
-			others, err := ParseDataplanes(given.others)
-			Expect(err).ToNot(HaveOccurred())
-
-			// when
-			err = PodToDataplane(dataplane, given.pod, given.services, others, given.serviceGetter)
 			// then
 			Expect(err).ToNot(HaveOccurred())
 
-			// when
 			actual, err := json.Marshal(dataplane)
-			// then
 			Expect(err).ToNot(HaveOccurred())
-			// and
-			Expect(actual).To(MatchYAML(given.expected))
+			expected, err := ioutil.ReadFile(filepath.Join("testdata", given.dataplane))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(actual).To(MatchYAML(expected))
 		},
-		Entry("Pod without Services", testCase{
-			pod:      pod,
-			services: nil,
-			expected: `
-            mesh: default
-            metadata:
-              creationTimestamp: null
-            spec:
-              networking: {}
-`,
+		Entry("01.Pod with 2 Services", testCase{
+			pod:            "01.pod.yaml",
+			servicesForPod: "01.services-for-pod.yaml",
+			dataplane:      "01.dataplane.yaml",
 		}),
-		Entry("Pod with a Service but mismatching ports", testCase{
-			pod: pod,
-			services: []*kube_core.Service{
-				{
-					Spec: kube_core.ServiceSpec{
-						Ports: []kube_core.ServicePort{
-							{
-								Protocol: "UDP", // all non-TCP ports should be ignored
-								Port:     80,
-								TargetPort: kube_intstr.IntOrString{
-									Type:   kube_intstr.Int,
-									IntVal: 8080,
-								},
-							},
-							{
-								Protocol: "SCTP", // all non-TCP ports should be ignored
-								Port:     443,
-								TargetPort: kube_intstr.IntOrString{
-									Type:   kube_intstr.Int,
-									IntVal: 8443,
-								},
-							},
-							{
-								Protocol: "TCP",
-								Port:     7070,
-								TargetPort: kube_intstr.IntOrString{
-									Type:   kube_intstr.Int,
-									IntVal: 7071,
-								},
-							},
-							{
-								Protocol: "", // defaults to TCP
-								Port:     6060,
-								TargetPort: kube_intstr.IntOrString{
-									Type:   kube_intstr.String,
-									StrVal: "diagnostics",
-								},
-							},
-						},
-					},
-				},
-			},
-			expected: `
-            mesh: default
-            metadata:
-              creationTimestamp: null
-            spec:
-              networking: {}
-`,
+		Entry("02. Pod with 1 Service and 1 other Dataplane", testCase{
+			pod:             "02.pod.yaml",
+			servicesForPod:  "02.services-for-pod.yaml",
+			otherDataplanes: "02.other-dataplanes.yaml",
+			otherServices:   "02.other-services.yaml",
+			dataplane:       "02.dataplane.yaml",
 		}),
-		Entry("Pod with 2 Services", testCase{
-			pod: pod,
-			services: []*kube_core.Service{
-				{
-					ObjectMeta: kube_meta.ObjectMeta{
-						Namespace: "demo",
-						Name:      "example",
-					},
-					Spec: kube_core.ServiceSpec{
-						Ports: []kube_core.ServicePort{
-							{
-								Protocol: "", // defaults to TCP
-								Port:     80,
-								TargetPort: kube_intstr.IntOrString{
-									Type:   kube_intstr.Int,
-									IntVal: 8080,
-								},
-							},
-							{
-								Protocol: "TCP",
-								Port:     443,
-								TargetPort: kube_intstr.IntOrString{
-									Type:   kube_intstr.Int,
-									IntVal: 8443,
-								},
-							},
-						},
-					},
-				},
-				{
-					ObjectMeta: kube_meta.ObjectMeta{
-						Namespace: "playground",
-						Name:      "sample",
-					},
-					Spec: kube_core.ServiceSpec{
-						Ports: []kube_core.ServicePort{
-							{
-								Protocol: "TCP",
-								Port:     7071,
-								TargetPort: kube_intstr.IntOrString{
-									Type:   kube_intstr.Int,
-									IntVal: 7070,
-								},
-							},
-							{
-								Protocol: "TCP",
-								Port:     6061,
-								TargetPort: kube_intstr.IntOrString{
-									Type:   kube_intstr.String,
-									StrVal: "metrics",
-								},
-							},
-						},
-					},
-				},
-			},
-			expected: `
-            mesh: default
-            metadata:
-              creationTimestamp: null
-            spec:
-              networking:
-                inbound:
-                - interface: 192.168.0.1:8080:8080
-                  tags:
-                    app: example
-                    service: example.demo.svc:80
-                    version: "0.1"
-                - interface: 192.168.0.1:8443:8443
-                  tags:
-                    app: example
-                    service: example.demo.svc:443
-                    version: "0.1"
-                - interface: 192.168.0.1:7070:7070
-                  tags:
-                    app: example
-                    service: sample.playground.svc:7071
-                    version: "0.1"
-                - interface: 192.168.0.1:6060:6060
-                  tags:
-                    app: example
-                    service: sample.playground.svc:6061
-                    version: "0.1"
-`,
+		Entry("03. Pod with gateway annotation and 1 service", testCase{
+			pod:            "03.pod.yaml",
+			servicesForPod: "03.services-for-pod.yaml",
+			dataplane:      "03.dataplane.yaml",
 		}),
-		Entry("Pod with 1 Service and 1 other Dataplane", testCase{
-			pod: pod,
-			services: []*kube_core.Service{
-				{
-					ObjectMeta: kube_meta.ObjectMeta{
-						Namespace: "demo",
-						Name:      "example",
-					},
-					Spec: kube_core.ServiceSpec{
-						Ports: []kube_core.ServicePort{
-							{
-								Protocol: "", // defaults to TCP
-								Port:     80,
-								TargetPort: kube_intstr.IntOrString{
-									Type:   kube_intstr.Int,
-									IntVal: 8080,
-								},
-							},
-						},
-					},
-				},
-			},
-			others: []string{`
-            apiVersion: kuma.io/v1alpha1
-            kind: Dataplane
-            mesh: default
-            metadata:
-              name: test-app-8646b8bbc8-5qbl2
-              namespace: playground
-            spec:
-              networking:
-                inbound:
-                - interface: 10.244.0.25:80:80
-                  tags:
-                    app: test-app
-                    pod-template-hash: 8646b8bbc8
-                    service: test-app.playground.svc:80
-                - interface: 10.244.0.25:443:443
-                  tags:
-                    app: test-app
-                    pod-template-hash: 8646b8bbc8
-                    service: test-app.playground.svc:443
-                transparentProxying:
-                  redirectPort: 15001
-`,
-			},
-			serviceGetter: fakeReader{
-				"playground/test-app": `
-                    apiVersion: v1
-                    kind: Service
-                    metadata:
-                      name: test-app
-                      namespace: playground
-                    spec:
-                      clusterIP: 10.108.144.24
-                      ports:
-                      - name: http
-                        port: 80
-                        protocol: TCP
-                        targetPort: 80
-                      - name: https
-                        port: 443
-                        protocol: TCP
-                        targetPort: 80
-                      selector:
-                        app: test-app
-                      sessionAffinity: None
-                      type: ClusterIP
-                    status:
-                      loadBalancer: {}
-`,
-			},
-			expected: `
-            mesh: default
-            metadata:
-              creationTimestamp: null
-            spec:
-              networking:
-                inbound:
-                - interface: 192.168.0.1:8080:8080
-                  tags:
-                    app: example
-                    service: example.demo.svc:80
-                    version: "0.1"
-                outbound:
-                - interface: 10.108.144.24:443
-                  service: test-app.playground.svc:443
-                - interface: 10.108.144.24:80
-                  service: test-app.playground.svc:80
-`,
+		Entry("04. Pod with direct access to all services", testCase{
+			pod:             "04.pod.yaml",
+			servicesForPod:  "04.services-for-pod.yaml",
+			otherDataplanes: "04.other-dataplanes.yaml",
+			otherServices:   "04.other-services.yaml",
+			dataplane:       "04.dataplane.yaml",
+		}),
+		Entry("05. Pod with direct access to chosen services", testCase{
+			pod:             "05.pod.yaml",
+			servicesForPod:  "05.services-for-pod.yaml",
+			otherDataplanes: "05.other-dataplanes.yaml",
+			otherServices:   "05.other-services.yaml",
+			dataplane:       "05.dataplane.yaml",
+		}),
+		Entry("06. Pod with headless service and communication to headless services", testCase{
+			pod:             "06.pod.yaml",
+			servicesForPod:  "06.services-for-pod.yaml",
+			otherDataplanes: "06.other-dataplanes.yaml",
+			otherServices:   "06.other-services.yaml",
+			dataplane:       "06.dataplane.yaml",
+		}),
+		Entry("07. Pod with communication to headless services and direct access to this service should generate direct listener once", testCase{
+			pod:             "07.pod.yaml",
+			servicesForPod:  "07.services-for-pod.yaml",
+			otherDataplanes: "07.other-dataplanes.yaml",
+			otherServices:   "07.other-services.yaml",
+			dataplane:       "07.dataplane.yaml",
 		}),
 	)
+
+	Context("when Dataplane cannot be generated", func() {
+		type testCase struct {
+			pod         string
+			services    []string
+			expectedErr string
+		}
+
+		DescribeTable("should return a descriptive error",
+			func(given testCase) {
+				// given
+				converter := PodConverter{}
+
+				pod := &kube_core.Pod{}
+				err := yaml.Unmarshal([]byte(given.pod), pod)
+				Expect(err).ToNot(HaveOccurred())
+
+				services, err := ParseServices(given.services)
+				Expect(err).ToNot(HaveOccurred())
+
+				dataplane := &mesh_k8s.Dataplane{}
+
+				// when
+				err = converter.PodToDataplane(dataplane, pod, services, nil)
+
+				// then
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(Equal(given.expectedErr))
+			},
+			Entry("regular Pod without Services", testCase{
+				pod:         pod,
+				services:    nil,
+				expectedErr: `Kuma requires every Pod in a Mesh to be a part of at least one Service. However, there are no Services that select this Pod.`,
+			}),
+			Entry("gateway Pod without Services", testCase{
+				pod:         gatewayPod,
+				services:    nil,
+				expectedErr: `Kuma requires every Pod in a Mesh to be a part of at least one Service. However, there are no Services that select this Pod.`,
+			}),
+			Entry("Pod with a Service but mismatching ports", testCase{
+				pod: pod,
+				services: []string{`
+                spec:
+                  clusterIP: 192.168.0.1
+                  ports:
+                  - protocol: UDP    # all non-TCP ports should be ignored
+                    port: 80
+                    targetPort: 8080
+                  - protocol: SCTP   # all non-TCP ports should be ignored
+                    port: 443
+                    targetPort: 8443
+                  - protocol: TCP
+                    port: 7070
+                    targetPort: api
+                  - # defaults to TCP protocol
+                    port: 6060
+                    targetPort: diagnostics
+`},
+				expectedErr: `Kuma requires every Pod in a Mesh to be a part of at least one Service. However, this Pod doesn't have any container ports that would satisfy matching Service(s).`,
+			}),
+		)
+	})
 })
 
 var _ = Describe("MeshFor(..)", func() {
@@ -366,9 +299,9 @@ var _ = Describe("MeshFor(..)", func() {
 		}),
 		Entry("Pod with non-empty `kuma.io/mesh` annotation", testCase{
 			podAnnotations: map[string]string{
-				"kuma.io/mesh": "pilot",
+				"kuma.io/mesh": "demo",
 			},
-			expected: "pilot",
+			expected: "demo",
 		}),
 	)
 })
@@ -376,8 +309,10 @@ var _ = Describe("MeshFor(..)", func() {
 var _ = Describe("InboundTagsFor(..)", func() {
 
 	type testCase struct {
-		podLabels map[string]string
-		expected  map[string]string
+		isGateway      bool
+		podLabels      map[string]string
+		svcAnnotations map[string]string
+		expected       map[string]string
 	}
 
 	DescribeTable("should combine Pod's labels with Service's FQDN and port",
@@ -396,6 +331,7 @@ var _ = Describe("InboundTagsFor(..)", func() {
 					Labels: map[string]string{
 						"more": "labels",
 					},
+					Annotations: given.svcAnnotations,
 				},
 				Spec: kube_core.ServiceSpec{
 					Ports: []kube_core.ServicePort{
@@ -411,31 +347,96 @@ var _ = Describe("InboundTagsFor(..)", func() {
 				},
 			}
 
-			// then
-			Expect(InboundTagsFor(pod, svc, &svc.Spec.Ports[0])).To(Equal(given.expected))
+			// expect
+			Expect(InboundTagsFor(pod, svc, &svc.Spec.Ports[0], given.isGateway)).To(Equal(given.expected))
 		},
 		Entry("Pod without labels", testCase{
+			isGateway: false,
 			podLabels: nil,
 			expected: map[string]string{
-				"service": "example.demo.svc:80",
+				"service":  "example.demo.svc:80",
+				"protocol": "tcp", // we want Kuma's default behaviour to be explicit to a user
 			},
 		}),
 		Entry("Pod with labels", testCase{
+			isGateway: false,
 			podLabels: map[string]string{
 				"app":     "example",
 				"version": "0.1",
 			},
 			expected: map[string]string{
-				"app":     "example",
-				"version": "0.1",
-				"service": "example.demo.svc:80",
+				"app":      "example",
+				"version":  "0.1",
+				"service":  "example.demo.svc:80",
+				"protocol": "tcp", // we want Kuma's default behaviour to be explicit to a user
 			},
 		}),
 		Entry("Pod with `service` label", testCase{
+			isGateway: false,
 			podLabels: map[string]string{
 				"service": "something",
 				"app":     "example",
 				"version": "0.1",
+			},
+			expected: map[string]string{
+				"app":      "example",
+				"version":  "0.1",
+				"service":  "example.demo.svc:80",
+				"protocol": "tcp", // we want Kuma's default behaviour to be explicit to a user
+			},
+		}),
+		Entry("Service with a `<port>.service.kuma.io/protocol` annotation and an unknown value", testCase{
+			isGateway: false,
+			podLabels: map[string]string{
+				"app":     "example",
+				"version": "0.1",
+			},
+			svcAnnotations: map[string]string{
+				"80.service.kuma.io/protocol": "not-yet-supported-protocol",
+			},
+			expected: map[string]string{
+				"app":      "example",
+				"version":  "0.1",
+				"service":  "example.demo.svc:80",
+				"protocol": "not-yet-supported-protocol", // we want Kuma's behaviour to be straightforward to a user (just copy annotation value "as is")
+			},
+		}),
+		Entry("Service with a `<port>.service.kuma.io/protocol` annotation and a known value", testCase{
+			isGateway: false,
+			podLabels: map[string]string{
+				"app":     "example",
+				"version": "0.1",
+			},
+			svcAnnotations: map[string]string{
+				"80.service.kuma.io/protocol": "http",
+			},
+			expected: map[string]string{
+				"app":      "example",
+				"version":  "0.1",
+				"service":  "example.demo.svc:80",
+				"protocol": "http",
+			},
+		}),
+		Entry("`gateway` Pod should not have a `protocol` tag", testCase{
+			isGateway: true,
+			podLabels: map[string]string{
+				"app":     "example",
+				"version": "0.1",
+			},
+			expected: map[string]string{
+				"app":     "example",
+				"version": "0.1",
+				"service": "example.demo.svc:80",
+			},
+		}),
+		Entry("`gateway` Pod should not have a `protocol` tag even if `<port>.service.kuma.io/protocol` annotation is present", testCase{
+			isGateway: true,
+			podLabels: map[string]string{
+				"app":     "example",
+				"version": "0.1",
+			},
+			svcAnnotations: map[string]string{
+				"80.service.kuma.io/protocol": "http",
 			},
 			expected: map[string]string{
 				"app":     "example",
@@ -473,7 +474,95 @@ var _ = Describe("ServiceTagFor(..)", func() {
 	})
 })
 
+var _ = Describe("ProtocolTagFor(..)", func() {
+
+	type testCase struct {
+		annotations map[string]string
+		expected    string
+	}
+
+	DescribeTable("should infer service protocol from a `<port>.service.kuma.io/protocol` annotation",
+		func(given testCase) {
+			// given
+			svc := &kube_core.Service{
+				ObjectMeta: kube_meta.ObjectMeta{
+					Namespace:   "demo",
+					Name:        "example",
+					Annotations: given.annotations,
+				},
+				Spec: kube_core.ServiceSpec{
+					Ports: []kube_core.ServicePort{
+						{
+							Name: "http",
+							Port: 80,
+							TargetPort: kube_intstr.IntOrString{
+								Type:   kube_intstr.Int,
+								IntVal: 8080,
+							},
+						},
+					},
+				},
+			}
+
+			// expect
+			Expect(ProtocolTagFor(svc, &svc.Spec.Ports[0])).To(Equal(given.expected))
+		},
+		Entry("no `<port>.service.kuma.io/protocol` annotation", testCase{
+			annotations: nil,
+			expected:    "tcp", // we want Kuma's default behaviour to be explicit to a user
+		}),
+		Entry("`<port>.service.kuma.io/protocol` annotation has an empty value", testCase{
+			annotations: map[string]string{
+				"80.service.kuma.io/protocol": "",
+			},
+			expected: "tcp", // we want Kuma's default behaviour to be explicit to a user
+		}),
+		Entry("`<port>.service.kuma.io/protocol` annotation is for a different port", testCase{
+			annotations: map[string]string{
+				"8080.service.kuma.io/protocol": "http",
+			},
+			expected: "tcp", // we want Kuma's default behaviour to be explicit to a user
+		}),
+		Entry("`<port>.service.kuma.io/protocol` annotation has an unknown value", testCase{
+			annotations: map[string]string{
+				"80.service.kuma.io/protocol": "not-yet-supported-protocol",
+			},
+			expected: "not-yet-supported-protocol", // we want Kuma's behaviour to be straightforward to a user (just copy annotation value "as is")
+		}),
+		Entry("`<port>.service.kuma.io/protocol` annotation has a non-lowercase value", testCase{
+			annotations: map[string]string{
+				"80.service.kuma.io/protocol": "HtTp",
+			},
+			expected: "HtTp", // we want Kuma's behaviour to be straightforward to a user (just copy annotation value "as is")
+		}),
+		Entry("`<port>.service.kuma.io/protocol` annotation has a known value: http", testCase{
+			annotations: map[string]string{
+				"80.service.kuma.io/protocol": "http",
+			},
+			expected: "http",
+		}),
+		Entry("`<port>.service.kuma.io/protocol` annotation has a known value: tcp", testCase{
+			annotations: map[string]string{
+				"80.service.kuma.io/protocol": "tcp",
+			},
+			expected: "tcp",
+		}),
+	)
+})
+
 type fakeReader map[string]string
+
+func newFakeReader(services []*kube_core.Service) (fakeReader, error) {
+	servicesMap := map[string]string{}
+	for _, service := range services {
+		bytes, err := yaml.Marshal(service)
+		if err != nil {
+			return nil, err
+		}
+		servicesMap[service.GetNamespace()+"/"+service.GetName()] = string(bytes)
+	}
+	return servicesMap, nil
+}
 
 var _ kube_client.Reader = fakeReader{}
 
