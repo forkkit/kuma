@@ -314,6 +314,8 @@ function _kumactl_get {
   case $state in
   cmnds)
     commands=(
+      "circuit-breaker:Show a single CircuitBreaker resource"
+      "circuit-breakers:Show CircuitBreakers"
       "dataplane:Show a single Dataplane resource"
       "dataplanes:Show Dataplanes"
       "fault-injection:Show a single Fault-Injection resource"
@@ -340,6 +342,12 @@ function _kumactl_get {
   esac
 
   case "$words[1]" in
+  circuit-breaker)
+    _kumactl_get_circuit-breaker
+    ;;
+  circuit-breakers)
+    _kumactl_get_circuit-breakers
+    ;;
   dataplane)
     _kumactl_get_dataplane
     ;;
@@ -401,6 +409,24 @@ function _kumactl_get {
     _kumactl_get_traffic-traces
     ;;
   esac
+}
+
+function _kumactl_get_circuit-breaker {
+  _arguments \
+    '--config-file[path to the configuration file to use]:' \
+    '--log-level[log level: one of off|info|debug]:' \
+    '(-m --mesh)'{-m,--mesh}'[mesh to use]:' \
+    '(-o --output)'{-o,--output}'[output format: one of table|yaml|json]:'
+}
+
+function _kumactl_get_circuit-breakers {
+  _arguments \
+    '--offset[the offset that indicates starting element of the resources list to retrieve]:' \
+    '--size[maximum number of elements to return]:' \
+    '--config-file[path to the configuration file to use]:' \
+    '--log-level[log level: one of off|info|debug]:' \
+    '(-m --mesh)'{-m,--mesh}'[mesh to use]:' \
+    '(-o --output)'{-o,--output}'[output format: one of table|yaml|json]:'
 }
 
 function _kumactl_get_dataplane {
@@ -641,6 +667,8 @@ function _kumactl_install {
   cmnds)
     commands=(
       "control-plane:Install Kuma Control Plane on Kubernetes"
+      "dns:Install DNS to Kubernetes"
+      "ingress:Install Ingress on Kubernetes"
       "metrics:Install Metrics backend in Kubernetes cluster (Prometheus + Grafana)"
       "tracing:Install Tracing backend in Kubernetes cluster (Jaeger)"
     )
@@ -651,6 +679,12 @@ function _kumactl_install {
   case "$words[1]" in
   control-plane)
     _kumactl_install_control-plane
+    ;;
+  dns)
+    _kumactl_install_dns
+    ;;
+  ingress)
+    _kumactl_install_ingress
     ;;
   metrics)
     _kumactl_install_metrics
@@ -665,6 +699,7 @@ function _kumactl_install_control-plane {
   _arguments \
     '--admission-server-tls-cert[TLS certificate for the admission web hooks implemented by the Kuma Control Plane]:' \
     '--admission-server-tls-key[TLS key for the admission web hooks implemented by the Kuma Control Plane]:' \
+    '--cluster-name[set the Kuma cluster name]:' \
     '--cni-enabled[install Kuma with CNI instead of proxy init container]' \
     '--cni-image[image of Kuma CNI component, if CNIEnabled equals true]:' \
     '--cni-version[version of the CNIImage]:' \
@@ -675,9 +710,32 @@ function _kumactl_install_control-plane {
     '--dataplane-init-image[init image of the Kuma Dataplane component]:' \
     '--image-pull-policy[image pull policy that applies to all components of the Kuma Control Plane]:' \
     '--injector-failure-policy[failue policy of the mutating web hook implemented by the Kuma Injector component]:' \
+    '--mode[kuma cp modes: one of standalone|remote|global]:' \
     '--namespace[namespace to install Kuma Control Plane to]:' \
     '--sds-tls-cert[TLS certificate for the SDS server]:' \
     '--sds-tls-key[TLS key for the SDS server]:' \
+    '--use-node-port[use NodePort instead of LoadBalancer]' \
+    '--config-file[path to the configuration file to use]:' \
+    '--log-level[log level: one of off|info|debug]:' \
+    '(-m --mesh)'{-m,--mesh}'[mesh to use]:'
+}
+
+function _kumactl_install_dns {
+  _arguments \
+    '--config-file[path to the configuration file to use]:' \
+    '--log-level[log level: one of off|info|debug]:' \
+    '(-m --mesh)'{-m,--mesh}'[mesh to use]:'
+}
+
+function _kumactl_install_ingress {
+  _arguments \
+    '--drain-time[drain time for Envoy proxy]:' \
+    '--image[image of the Ingress component]:' \
+    '--image-pull-policy[image pull policy for Ingress]:' \
+    '--kuma-cp-address[the address of Kuma CP]:' \
+    '--namespace[namespace to install Ingress to]:' \
+    '--use-node-port[use NodePort instead of LoadBalancer]' \
+    '--version[version of Ingress component]:' \
     '--config-file[path to the configuration file to use]:' \
     '--log-level[log level: one of off|info|debug]:' \
     '(-m --mesh)'{-m,--mesh}'[mesh to use]:'

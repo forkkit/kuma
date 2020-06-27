@@ -7,11 +7,11 @@ import (
 	envoy_core "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	envoy_grpc_credential "github.com/envoyproxy/go-control-plane/envoy/config/grpc_credential/v2alpha"
 	envoy_type_matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/wrappers"
 
 	core_xds "github.com/Kong/kuma/pkg/core/xds"
 	"github.com/Kong/kuma/pkg/sds/server"
+	"github.com/Kong/kuma/pkg/util/proto"
 	util_xds "github.com/Kong/kuma/pkg/util/xds"
 	xds_context "github.com/Kong/kuma/pkg/xds/context"
 )
@@ -40,17 +40,25 @@ func CreateDownstreamTlsContext(ctx xds_context.Context, metadata *core_xds.Data
 // The downstream client exposes for the upstream server cert with multiple URI SANs, which means that if DP has inbound with services "web" and "web-api" and communicates with "backend"
 // the upstream server ("backend") will see that DP with TLS certificate of URIs of "web" and "web-api".
 // There is no way to correlate incoming request to "web" or "web-api" with outgoing request to "backend" to expose only one URI SAN.
-func CreateUpstreamTlsContext(ctx xds_context.Context, metadata *core_xds.DataplaneMetadata, upstreamService string) (*envoy_auth.UpstreamTlsContext, error) {
+//
+// Pass "*" for upstreamService to validate that upstream service is a service that is part of the mesh (but not specific one)
+func CreateUpstreamTlsContext(ctx xds_context.Context, metadata *core_xds.DataplaneMetadata, upstreamService string, sni string) (*envoy_auth.UpstreamTlsContext, error) {
 	if !ctx.Mesh.Resource.MTLSEnabled() {
 		return nil, nil
 	}
-	validationSANMatcher := ServiceSpiffeIDMatcher(ctx.Mesh.Resource.Meta.GetName(), upstreamService)
+	var validationSANMatcher *envoy_type_matcher.StringMatcher
+	if upstreamService == "*" {
+		validationSANMatcher = MeshSpiffeIDPrefixMatcher(ctx.Mesh.Resource.Meta.GetName())
+	} else {
+		validationSANMatcher = ServiceSpiffeIDMatcher(ctx.Mesh.Resource.Meta.GetName(), upstreamService)
+	}
 	commonTlsContext, err := CreateCommonTlsContext(ctx, metadata, validationSANMatcher)
 	if err != nil {
 		return nil, err
 	}
 	return &envoy_auth.UpstreamTlsContext{
 		CommonTlsContext: commonTlsContext,
+		Sni:              sni,
 	}, nil
 }
 
@@ -91,7 +99,7 @@ func sdsSecretConfig(context xds_context.Context, name string, metadata *core_xd
 				},
 			},
 		}
-		typedConfig, err := ptypes.MarshalAny(config)
+		typedConfig, err := proto.MarshalAnyDeterministic(config)
 		if err != nil {
 			return nil, err
 		}

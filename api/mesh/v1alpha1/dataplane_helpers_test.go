@@ -4,7 +4,6 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
-	gomega_types "github.com/onsi/gomega/types"
 
 	. "github.com/Kong/kuma/api/mesh/v1alpha1"
 )
@@ -29,76 +28,6 @@ var _ = Describe("MultiValueTagSet", func() {
 					"service":  map[string]bool{},
 				},
 				expected: []string{"service", "services", "version", "versions"},
-			}),
-		)
-	})
-})
-
-var _ = Describe("ServiceTagValue", func() {
-
-	Describe("HasPort()", func() {
-		type testCase struct {
-			value    string
-			expected bool
-		}
-
-		DescribeTable("should determine correctly whether a service tag includes service port",
-			func(given testCase) {
-				Expect(ServiceTagValue(given.value).HasPort()).To(Equal(given.expected))
-			},
-			Entry("name only", testCase{
-				value:    "web",
-				expected: false,
-			}),
-			Entry("name and port", testCase{
-				value:    "web.default.svc:80",
-				expected: true,
-			}),
-			Entry("incomplete value", testCase{
-				value:    "web:",
-				expected: true,
-			}),
-		)
-	})
-
-	Describe("HostAndPort()", func() {
-		type testCase struct {
-			value        string
-			expectedHost string
-			expectedPort uint32
-			expectedErr  string
-		}
-
-		DescribeTable("should parse `service` tag value into host and port",
-			func(given testCase) {
-				// when
-				host, port, err := ServiceTagValue(given.value).HostAndPort()
-
-				if given.expectedErr != "" {
-					Expect(err).To(MatchError(given.expectedErr))
-				} else {
-					Expect(err).ToNot(HaveOccurred())
-					Expect(host).To(Equal(given.expectedHost))
-					Expect(port).To(Equal(given.expectedPort))
-				}
-			},
-			Entry("name and port", testCase{
-				value:        "web.default.svc:80",
-				expectedHost: "web.default.svc",
-				expectedPort: 80,
-				expectedErr:  "",
-			}),
-			Entry("incomplete value", testCase{
-				value:        "web:",
-				expectedHost: "",
-				expectedPort: 0,
-				expectedErr:  `strconv.ParseUint: parsing "": invalid syntax`,
-			}),
-			Entry("name only", testCase{
-				value:        "web",
-				expectedHost: "",
-				expectedPort: 0,
-				expectedErr:  "address web: missing port in address",
 			}),
 		)
 	})
@@ -343,18 +272,6 @@ var _ = Describe("Dataplane_Networking", func() {
 					input:    &Dataplane_Networking{},
 					expected: []OutboundInterface{},
 				}),
-				Entry("legacy - 2 outbound interfaces", testCase{
-					input: &Dataplane_Networking{
-						Outbound: []*Dataplane_Networking_Outbound{
-							{Interface: ":8080"},
-							{Interface: "192.168.0.1:443"},
-						},
-					},
-					expected: []OutboundInterface{
-						{DataplaneIP: "127.0.0.1", DataplanePort: 8080},
-						{DataplaneIP: "192.168.0.1", DataplanePort: 443},
-					},
-				}),
 				Entry("2 outbound interfaces", testCase{
 					input: &Dataplane_Networking{
 						Outbound: []*Dataplane_Networking_Outbound{
@@ -371,32 +288,6 @@ var _ = Describe("Dataplane_Networking", func() {
 						{DataplaneIP: "127.0.0.1", DataplanePort: 8080},
 						{DataplaneIP: "192.168.0.1", DataplanePort: 443},
 					},
-				}),
-			)
-		})
-
-		Context("invalid input values", func() {
-			type testCase struct {
-				input       *Dataplane_Networking
-				expectedErr gomega_types.GomegaMatcher
-			}
-
-			DescribeTable("should fail on invalid input values",
-				func(given testCase) {
-					// when
-					ifaces, err := given.input.GetOutboundInterfaces()
-					// then
-					Expect(ifaces).To(BeNil())
-					// and
-					Expect(err.Error()).To(given.expectedErr)
-				},
-				Entry("dataplane IP address is missing", testCase{
-					input: &Dataplane_Networking{
-						Outbound: []*Dataplane_Networking_Outbound{
-							{Interface: ":443:8443"},
-						},
-					},
-					expectedErr: Equal(`invalid format: expected "[ IPv4 | '[' IPv6 ']' ] ':' DATAPLANE_PORT", got ":443:8443"`),
 				}),
 			)
 		})
@@ -427,18 +318,6 @@ var _ = Describe("Dataplane_Networking", func() {
 					input:    &Dataplane_Networking{},
 					expected: []InboundInterface{},
 				}),
-				Entry("legacy - 2 inbound interfaces", testCase{
-					input: &Dataplane_Networking{
-						Inbound: []*Dataplane_Networking_Inbound{
-							{Interface: "192.168.0.1:80:8080"},
-							{Interface: "192.168.0.1:443:8443"},
-						},
-					},
-					expected: []InboundInterface{
-						{DataplaneIP: "192.168.0.1", DataplanePort: 80, WorkloadPort: 8080},
-						{DataplaneIP: "192.168.0.1", DataplanePort: 443, WorkloadPort: 8443},
-					},
-				}),
 				Entry("2 inbound interfaces", testCase{
 					input: &Dataplane_Networking{
 						Address: "192.168.0.1",
@@ -460,33 +339,6 @@ var _ = Describe("Dataplane_Networking", func() {
 				}),
 			)
 		})
-
-		Context("invalid input values", func() {
-			type testCase struct {
-				input       *Dataplane_Networking
-				expectedErr gomega_types.GomegaMatcher
-			}
-
-			DescribeTable("should fail on invalid input values",
-				func(given testCase) {
-					// when
-					ifaces, err := given.input.GetInboundInterfaces()
-					// then
-					Expect(ifaces).To(BeNil())
-					// and
-					Expect(err.Error()).To(given.expectedErr)
-				},
-				Entry("dataplane IP address is missing", testCase{
-					input: &Dataplane_Networking{
-						Inbound: []*Dataplane_Networking_Inbound{
-							{Interface: "192.168.0.1:80:8080"},
-							{Interface: ":443:8443"},
-						},
-					},
-					expectedErr: Equal(`invalid DATAPLANE_IP in ":443:8443": "" is not a valid IP address`),
-				}),
-			)
-		})
 	})
 })
 
@@ -500,8 +352,7 @@ var _ = Describe("Dataplane_Networking_Outbound", func() {
 		func(given testCase) {
 			//given
 			outbound := Dataplane_Networking_Outbound{
-				Interface: "sdf",
-				Service:   given.serviceTag,
+				Service: given.serviceTag,
 			}
 
 			// when

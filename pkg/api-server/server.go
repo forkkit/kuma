@@ -8,12 +8,15 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/Kong/kuma/pkg/clusters/poller"
+
 	"github.com/emicklei/go-restful"
 	"github.com/pkg/errors"
 
 	"github.com/Kong/kuma/pkg/api-server/definitions"
 	"github.com/Kong/kuma/pkg/config"
 	api_server_config "github.com/Kong/kuma/pkg/config/api-server"
+	config_core "github.com/Kong/kuma/pkg/config/core"
 	"github.com/Kong/kuma/pkg/core"
 	"github.com/Kong/kuma/pkg/core/resources/apis/mesh"
 	"github.com/Kong/kuma/pkg/core/resources/manager"
@@ -26,6 +29,10 @@ var (
 
 type ApiServer struct {
 	server *http.Server
+}
+
+func (a *ApiServer) NeedLeaderElection() bool {
+	return false
 }
 
 func (a *ApiServer) Address() string {
@@ -50,7 +57,7 @@ func init() {
 	}
 }
 
-func NewApiServer(resManager manager.ResourceManager, defs []definitions.ResourceWsDefinition, serverConfig *api_server_config.ApiServerConfig, cfg config.Config) (*ApiServer, error) {
+func NewApiServer(resManager manager.ResourceManager, clusters poller.ClusterStatusPoller, defs []definitions.ResourceWsDefinition, serverConfig *api_server_config.ApiServerConfig, cfg config.Config) (*ApiServer, error) {
 	container := restful.NewContainer()
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", serverConfig.Port),
@@ -85,6 +92,9 @@ func NewApiServer(resManager manager.ResourceManager, defs []definitions.Resourc
 	}
 	container.Add(configWs)
 
+	clustersWs := clustersWs(clusters)
+	container.Add(clustersWs)
+
 	container.Filter(cors.Filter)
 	return &ApiServer{
 		server: srv,
@@ -108,12 +118,12 @@ func addResourcesEndpoints(ws *restful.WebService, defs []definitions.ResourceWs
 				ResourceWsDefinition: definition,
 				meshFromRequest:      meshFromPathParam("mesh"),
 			}
-			if !config.ReadOnly {
-				endpoints.addCreateOrUpdateEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
-				endpoints.addDeleteEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
-			} else {
+			if config.ReadOnly || definition.ReadOnly {
 				endpoints.addCreateOrUpdateEndpointReadOnly(ws, "/meshes/{mesh}/"+definition.Path)
 				endpoints.addDeleteEndpointReadOnly(ws, "/meshes/{mesh}/"+definition.Path)
+			} else {
+				endpoints.addCreateOrUpdateEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
+				endpoints.addDeleteEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
 			}
 			endpoints.addFindEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
 			endpoints.addListEndpoint(ws, "/meshes/{mesh}/"+definition.Path)
@@ -125,12 +135,12 @@ func addResourcesEndpoints(ws *restful.WebService, defs []definitions.ResourceWs
 				ResourceWsDefinition: definition,
 				meshFromRequest:      meshFromPathParam("name"),
 			}
-			if !config.ReadOnly {
-				endpoints.addCreateOrUpdateEndpoint(ws, "/meshes")
-				endpoints.addDeleteEndpoint(ws, "/meshes")
-			} else {
+			if config.ReadOnly || definition.ReadOnly {
 				endpoints.addCreateOrUpdateEndpointReadOnly(ws, "/meshes")
 				endpoints.addDeleteEndpointReadOnly(ws, "/meshes")
+			} else {
+				endpoints.addCreateOrUpdateEndpoint(ws, "/meshes")
+				endpoints.addDeleteEndpoint(ws, "/meshes")
 			}
 			endpoints.addFindEndpoint(ws, "/meshes")
 			endpoints.addListEndpoint(ws, "/meshes")
@@ -164,7 +174,14 @@ func (a *ApiServer) Start(stop <-chan struct{}) error {
 
 func SetupServer(rt runtime.Runtime) error {
 	cfg := rt.Config()
-	apiServer, err := NewApiServer(rt.ResourceManager(), definitions.All, rt.Config().ApiServer, &cfg)
+	if cfg.Mode == config_core.Remote {
+		for _, definition := range definitions.All {
+			if definition.ResourceFactory().GetType() != mesh.DataplaneType {
+				definition.ReadOnly = true
+			}
+		}
+	}
+	apiServer, err := NewApiServer(rt.ResourceManager(), rt.Clusters(), definitions.All, rt.Config().ApiServer, &cfg)
 	if err != nil {
 		return err
 	}

@@ -143,6 +143,7 @@ var _ = Describe("PodToDataplane(..)", func() {
 
 			converter := PodConverter{
 				ServiceGetter: serviceGetter,
+				ClusterName:   "cluster-1",
 			}
 
 			// when
@@ -196,12 +197,10 @@ var _ = Describe("PodToDataplane(..)", func() {
 			otherServices:   "06.other-services.yaml",
 			dataplane:       "06.dataplane.yaml",
 		}),
-		Entry("07. Pod with communication to headless services and direct access to this service should generate direct listener once", testCase{
-			pod:             "07.pod.yaml",
-			servicesForPod:  "07.services-for-pod.yaml",
-			otherDataplanes: "07.other-dataplanes.yaml",
-			otherServices:   "07.other-services.yaml",
-			dataplane:       "07.dataplane.yaml",
+		Entry("07.Pod with metrics override", testCase{
+			pod:            "07.pod.yaml",
+			servicesForPod: "07.services-for-pod.yaml",
+			dataplane:      "07.dataplane.yaml",
 		}),
 	)
 
@@ -310,6 +309,7 @@ var _ = Describe("InboundTagsFor(..)", func() {
 
 	type testCase struct {
 		isGateway      bool
+		clusterName    string
 		podLabels      map[string]string
 		svcAnnotations map[string]string
 		expected       map[string]string
@@ -348,13 +348,13 @@ var _ = Describe("InboundTagsFor(..)", func() {
 			}
 
 			// expect
-			Expect(InboundTagsFor(pod, svc, &svc.Spec.Ports[0], given.isGateway)).To(Equal(given.expected))
+			Expect(InboundTagsFor(given.clusterName, pod, svc, &svc.Spec.Ports[0], given.isGateway)).To(Equal(given.expected))
 		},
 		Entry("Pod without labels", testCase{
 			isGateway: false,
 			podLabels: nil,
 			expected: map[string]string{
-				"service":  "example.demo.svc:80",
+				"service":  "example_demo_svc_80",
 				"protocol": "tcp", // we want Kuma's default behaviour to be explicit to a user
 			},
 		}),
@@ -367,7 +367,7 @@ var _ = Describe("InboundTagsFor(..)", func() {
 			expected: map[string]string{
 				"app":      "example",
 				"version":  "0.1",
-				"service":  "example.demo.svc:80",
+				"service":  "example_demo_svc_80",
 				"protocol": "tcp", // we want Kuma's default behaviour to be explicit to a user
 			},
 		}),
@@ -381,7 +381,7 @@ var _ = Describe("InboundTagsFor(..)", func() {
 			expected: map[string]string{
 				"app":      "example",
 				"version":  "0.1",
-				"service":  "example.demo.svc:80",
+				"service":  "example_demo_svc_80",
 				"protocol": "tcp", // we want Kuma's default behaviour to be explicit to a user
 			},
 		}),
@@ -397,7 +397,7 @@ var _ = Describe("InboundTagsFor(..)", func() {
 			expected: map[string]string{
 				"app":      "example",
 				"version":  "0.1",
-				"service":  "example.demo.svc:80",
+				"service":  "example_demo_svc_80",
 				"protocol": "not-yet-supported-protocol", // we want Kuma's behaviour to be straightforward to a user (just copy annotation value "as is")
 			},
 		}),
@@ -413,7 +413,7 @@ var _ = Describe("InboundTagsFor(..)", func() {
 			expected: map[string]string{
 				"app":      "example",
 				"version":  "0.1",
-				"service":  "example.demo.svc:80",
+				"service":  "example_demo_svc_80",
 				"protocol": "http",
 			},
 		}),
@@ -426,7 +426,7 @@ var _ = Describe("InboundTagsFor(..)", func() {
 			expected: map[string]string{
 				"app":     "example",
 				"version": "0.1",
-				"service": "example.demo.svc:80",
+				"service": "example_demo_svc_80",
 			},
 		}),
 		Entry("`gateway` Pod should not have a `protocol` tag even if `<port>.service.kuma.io/protocol` annotation is present", testCase{
@@ -441,7 +441,22 @@ var _ = Describe("InboundTagsFor(..)", func() {
 			expected: map[string]string{
 				"app":     "example",
 				"version": "0.1",
-				"service": "example.demo.svc:80",
+				"service": "example_demo_svc_80",
+			},
+		}),
+		Entry("Inject a cluster tag if ClusterName is set", testCase{
+			isGateway:   false,
+			clusterName: "cluster-1",
+			podLabels: map[string]string{
+				"app":     "example",
+				"version": "0.1",
+			},
+			expected: map[string]string{
+				"app":      "example",
+				"version":  "0.1",
+				"service":  "example_demo_svc_80",
+				"cluster":  "cluster-1",
+				"protocol": "tcp",
 			},
 		}),
 	)
@@ -470,7 +485,7 @@ var _ = Describe("ServiceTagFor(..)", func() {
 		}
 
 		// then
-		Expect(ServiceTagFor(svc, &svc.Spec.Ports[0])).To(Equal("example.demo.svc:80"))
+		Expect(ServiceTagFor(svc, &svc.Spec.Ports[0])).To(Equal("example_demo_svc_80"))
 	})
 })
 

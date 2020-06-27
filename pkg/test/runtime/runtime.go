@@ -1,6 +1,11 @@
 package runtime
 
 import (
+	config_manager "github.com/Kong/kuma/pkg/core/config/manager"
+	config_store "github.com/Kong/kuma/pkg/core/config/store"
+	"github.com/Kong/kuma/pkg/dns"
+
+	kuma_cp "github.com/Kong/kuma/pkg/config/app/kuma-cp"
 	"github.com/Kong/kuma/pkg/core/datasource"
 	mesh_managers "github.com/Kong/kuma/pkg/core/managers/apis/mesh"
 	core_mesh "github.com/Kong/kuma/pkg/core/resources/apis/mesh"
@@ -12,10 +17,9 @@ import (
 	secret_cipher "github.com/Kong/kuma/pkg/core/secrets/cipher"
 	secret_manager "github.com/Kong/kuma/pkg/core/secrets/manager"
 	secret_store "github.com/Kong/kuma/pkg/core/secrets/store"
-	"github.com/Kong/kuma/pkg/plugins/ca/builtin"
-
-	kuma_cp "github.com/Kong/kuma/pkg/config/app/kuma-cp"
 	core_xds "github.com/Kong/kuma/pkg/core/xds"
+	"github.com/Kong/kuma/pkg/plugins/ca/builtin"
+	leader_memory "github.com/Kong/kuma/pkg/plugins/leader/memory"
 	resources_memory "github.com/Kong/kuma/pkg/plugins/resources/memory"
 )
 
@@ -31,7 +35,7 @@ func (i TestRuntimeInfo) GetInstanceId() string {
 
 func BuilderFor(cfg kuma_cp.Config) *core_runtime.Builder {
 	builder := core_runtime.BuilderFor(cfg).
-		WithComponentManager(component.NewManager()).
+		WithComponentManager(component.NewManager(leader_memory.NewAlwaysLeaderElector())).
 		WithResourceStore(resources_memory.NewStore()).
 		WithXdsContext(core_xds.NewXdsContext())
 
@@ -43,8 +47,24 @@ func BuilderFor(cfg kuma_cp.Config) *core_runtime.Builder {
 		WithReadOnlyResourceManager(rm)
 
 	builder.WithCaManager("builtin", builtin.NewBuiltinCaManager(builder.SecretManager()))
+	builder.WithLeaderInfo(&component.LeaderInfoComponent{})
+
+	_ = initializeConfigManager(cfg, builder)
+	_ = initializeDNSResolver(cfg, builder)
 
 	return builder
+}
+
+func initializeConfigManager(cfg kuma_cp.Config, builder *core_runtime.Builder) error {
+	store := config_store.NewConfigStore(builder.ResourceStore())
+	configm := config_manager.NewConfigManager(store)
+	builder.WithConfigManager(configm)
+	return nil
+}
+
+func initializeDNSResolver(cfg kuma_cp.Config, builder *core_runtime.Builder) error {
+	builder.WithDNSResolver(dns.NewDNSResolver("mesh"))
+	return nil
 }
 
 func newSecretManager(builder *core_runtime.Builder) secret_manager.SecretManager {

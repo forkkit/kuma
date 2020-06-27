@@ -112,9 +112,16 @@ var _ = Describe("Config WS", func() {
           "defaults": {
             "mesh": "type: Mesh\nname: default\n"
           },
+          "dnsServer": {
+            "domain": "mesh",
+            "port": 5653,
+            "CIDR": "240.0.0.0/4"
+          },
           "environment": "universal",
           "general": {
             "advertisedHostname": "localhost"
+          },
+          "kumaClusters": {
           },
           "guiServer": {
             "port": 5683,
@@ -126,6 +133,7 @@ var _ = Describe("Config WS", func() {
               "subscriptionLimit": 10
             }
           },
+          "mode": "standalone",
           "monitoringAssignmentServer": {
             "assignmentRefreshInterval": "1s",
             "grpcPort": 5676
@@ -217,6 +225,10 @@ var _ = Describe("Config WS", func() {
             "grpcPort": 5678,
             "tlsCertFile": "",
             "tlsKeyFile": ""
+          },
+          "kdsServer": {
+            "grpcPort": 5685,
+            "refreshInterval": "1s"
           }
         }
 		`, port)
